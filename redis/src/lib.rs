@@ -534,8 +534,8 @@ pub use crate::client::Client;
 pub use crate::cmd::CommandCacheConfig;
 pub use crate::cmd::{cmd, pack_command, pipe, Arg, Cmd, Iter};
 pub use crate::commands::{
-    Commands, ControlFlow, Direction, FlushAllOptions, FlushDbOptions, LposOptions, PubSubCommands,
-    ScanOptions, SetOptions,
+    Commands, ControlFlow, Direction, FlushAllOptions, FlushDbOptions, HashFieldExpirationOptions,
+    LposOptions, PubSubCommands, ScanOptions, SetOptions,
 };
 pub use crate::connection::{
     parse_redis_url, transaction, Connection, ConnectionAddr, ConnectionInfo, ConnectionLike,
@@ -568,6 +568,7 @@ pub use crate::types::{
     Expiry,
     SetExpiry,
     ExistenceCheck,
+    FieldExistenceCheck,
     ExpireOption,
     Role,
     ReplicaInfo,
