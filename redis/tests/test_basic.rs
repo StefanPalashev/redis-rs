@@ -5,11 +5,15 @@ mod support;
 #[cfg(test)]
 mod basic {
     use assert_approx_eq::assert_approx_eq;
-    use redis::{cmd, Client, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions};
+    use rand::distr::Alphanumeric;
+    use rand::{rng, Rng};
+    use redis::{
+        cmd, Client, Connection, ProtocolVersion, PushInfo, RedisConnectionInfo, Role, ScanOptions,
+    };
     use redis::{
         Commands, ConnectionInfo, ConnectionLike, ControlFlow, ErrorKind, ExistenceCheck,
-        ExpireOption, Expiry, PubSubCommands, PushKind, RedisResult, SetExpiry, SetOptions,
-        ToRedisArgs, Value,
+        ExpireOption, Expiry, FieldExistenceCheck, HashFieldExpirationOptions, PubSubCommands,
+        PushKind, RedisResult, SetExpiry, SetOptions, ToRedisArgs, Value,
     };
     use redis_test::utils::get_listener_on_free_port;
     use std::collections::{BTreeMap, BTreeSet};
@@ -20,6 +24,37 @@ mod basic {
     use std::vec;
 
     use crate::{assert_args, support::*};
+
+    const HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION: (u16, u16, u16) = (7, 9, 0);
+    const HASH_KEY: &str = "testing_hash";
+    const HASH_FIELDS_AND_VALUES: [(&str, u8); 5] =
+        [("f1", 1), ("f2", 2), ("f3", 4), ("f4", 8), ("f5", 16)];
+    const FIELD_EXISTS_WITHOUT_TTL: i8 = -1;
+
+    /// Generates a unique hash key that does not already exist.
+    fn generate_random_testing_hash_key(con: &mut Connection) -> String {
+        const TEST_HASH_KEY_BASE: &str = "testing_hash";
+        const TEST_HASH_KEY_RANDOM_LENGTH: usize = 7;
+
+        loop {
+            let generated_hash_key = format!(
+                "{}_{}",
+                TEST_HASH_KEY_BASE,
+                rng()
+                    .sample_iter(&Alphanumeric)
+                    .take(TEST_HASH_KEY_RANDOM_LENGTH)
+                    .map(char::from)
+                    .collect::<String>()
+            );
+
+            let hash_exists: bool = con.exists(&generated_hash_key).unwrap();
+
+            if !hash_exists {
+                println!("Generated random testing hash key: {}", &generated_hash_key);
+                return generated_hash_key;
+            }
+        }
+    }
 
     #[test]
     fn test_parse_redis_url() {
@@ -402,6 +437,757 @@ mod basic {
         assert_eq!(ttls, vec![-1, -1]);
 
         assert_eq!(con.unlink(&["foo"]), Ok(1));
+    }
+
+    fn run_test_if_version_supported<F>(minimum_required_version: &(u16, u16, u16), test_fn: F)
+    where
+        F: FnOnce(TestContext),
+    {
+        let ctx = TestContext::new();
+        let redis_version = ctx.get_version();
+
+        if redis_version < *minimum_required_version {
+            println!("Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+                    redis_version, minimum_required_version);
+            return;
+        }
+
+        test_fn(ctx); // Execute the test logic
+    }
+
+    /// Verify that the hash contains exactly the specified fields with their corresponding values.
+    fn verify_exact_hash_fields_and_values(
+        con: &mut Connection,
+        hash_key: &str,
+        hash_fields_and_values: &[(&str, u8)],
+    ) {
+        let hash_fields: HashMap<String, u8> = con.hgetall(hash_key).unwrap();
+        assert_eq!(hash_fields.len(), hash_fields_and_values.len());
+
+        for (field, value) in hash_fields_and_values {
+            assert_eq!(hash_fields.get(*field), Some(value));
+        }
+    }
+
+    #[inline(always)]
+    fn verify_fields_absence_from_hash(
+        hash_fields: &HashMap<String, String>,
+        hash_fields_to_check: &[&str],
+    ) {
+        hash_fields_to_check.iter().for_each(|key| {
+            assert!(!hash_fields.contains_key(*key));
+        });
+    }
+
+    #[test]
+    fn test_hgetdel_on_single_field_deletes_the_field_and_returns_its_value() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            // Delete the first field
+            let deleted_fields: Vec<u8> =
+                con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(deleted_fields.len(), 1);
+            assert_eq!(deleted_fields[0], HASH_FIELDS_AND_VALUES[0].1);
+
+            // Verify that the field has been deleted
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+        });
+    }
+
+    #[test]
+    fn test_hgetdel_on_multiple_fields_deletes_the_fields_and_returns_their_values() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let fields_to_delete = [
+                HASH_FIELDS_AND_VALUES[0].0, // "f1"
+                HASH_FIELDS_AND_VALUES[1].0, // "f2"
+            ];
+
+            // Delete the first two fields
+            let deleted_fields: Vec<u8> = con.hget_del(HASH_KEY, &fields_to_delete).unwrap();
+            assert_eq!(deleted_fields.len(), fields_to_delete.len());
+            assert_eq!(deleted_fields[0], HASH_FIELDS_AND_VALUES[0].1);
+            assert_eq!(deleted_fields[1], HASH_FIELDS_AND_VALUES[1].1);
+
+            // Verify that the fields have been deleted
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - fields_to_delete.len()
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &fields_to_delete);
+        });
+    }
+
+    #[test]
+    fn test_hgetdel_returns_nil_for_non_existing_field() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            // Delete the first field
+            let deleted_fields: Vec<u8> =
+                con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(deleted_fields.len(), 1);
+            assert_eq!(deleted_fields[0], HASH_FIELDS_AND_VALUES[0].1);
+
+            // Verify that the field has been deleted
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+
+            // Verify that a non-existing field returns NIL by attempting to delete the same field again
+            let deleted_fields: redis::RedisResult<Vec<u8>> =
+                con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0);
+            assert!(
+                matches!(deleted_fields, Err(err) if err.kind() == redis::ErrorKind::TypeError)
+            );
+        });
+    }
+
+    #[test]
+    fn test_hgetdel_on_hash_with_a_single_field_deletes_the_hash() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            let generated_hash_key = generate_random_testing_hash_key(&mut con);
+            let hash_field_name = HASH_FIELDS_AND_VALUES[0].0;
+            let hash_field_value = HASH_FIELDS_AND_VALUES[0].1;
+
+            // Create a new hash with a single field
+            assert_eq!(
+                con.hset(&generated_hash_key, hash_field_name, hash_field_value),
+                Ok(())
+            );
+            let mut hash_exists: bool = con.exists(&generated_hash_key).unwrap();
+            assert!(hash_exists);
+
+            // Delete the field from the hash
+            let deleted_fields: Vec<u8> =
+                con.hget_del(&generated_hash_key, hash_field_name).unwrap();
+            assert_eq!(deleted_fields.len(), 1);
+            assert_eq!(deleted_fields[0], hash_field_value);
+
+            // Verify that removing the last field deletes the hash
+            hash_exists = con.exists(&generated_hash_key).unwrap();
+            assert!(!hash_exists);
+        });
+    }
+
+    #[test]
+    fn test_hgetdel_returns_nil_for_non_existing_hash() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            let generated_hash_key = generate_random_testing_hash_key(&mut con);
+
+            let deleted_fields: redis::RedisResult<Vec<u8>> =
+                con.hget_del(&generated_hash_key, HASH_FIELDS_AND_VALUES[0].0);
+            assert!(
+                matches!(deleted_fields, Err(err) if err.kind() == redis::ErrorKind::TypeError)
+            );
+        });
+    }
+
+    #[test]
+    fn test_hgetex_can_get_a_single_field_value_without_setting_its_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hash_field_values: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::PERSIST)
+                .unwrap();
+            assert_eq!(hash_field_values.len(), 1);
+            assert_eq!(hash_field_values[0], HASH_FIELDS_AND_VALUES[0].1);
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(hash_field_ttls.len(), 1);
+            assert_eq!(hash_field_ttls[0], FIELD_EXISTS_WITHOUT_TTL);
+        });
+    }
+
+    #[test]
+    fn test_hgetex_can_get_multiple_field_values_without_setting_their_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let fields_to_retrieve = [
+                HASH_FIELDS_AND_VALUES[0].0, // "f1"
+                HASH_FIELDS_AND_VALUES[1].0, // "f2"
+            ];
+
+            let hash_field_values: Vec<u8> = con
+                .hget_ex(HASH_KEY, &fields_to_retrieve, Expiry::PERSIST)
+                .unwrap();
+            assert_eq!(hash_field_values.len(), fields_to_retrieve.len());
+            assert_eq!(hash_field_values[0], HASH_FIELDS_AND_VALUES[0].1);
+            assert_eq!(hash_field_values[1], HASH_FIELDS_AND_VALUES[1].1);
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, &fields_to_retrieve).unwrap();
+            assert_eq!(hash_field_ttls.len(), fields_to_retrieve.len());
+            assert_eq!(hash_field_ttls[0], FIELD_EXISTS_WITHOUT_TTL);
+            assert_eq!(hash_field_ttls[1], FIELD_EXISTS_WITHOUT_TTL);
+        });
+    }
+
+    #[test]
+    fn test_hgetex_can_get_a_single_field_value_and_set_its_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hash_field_values: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::EX(1))
+                .unwrap();
+            assert_eq!(hash_field_values.len(), 1);
+            assert_eq!(hash_field_values[0], HASH_FIELDS_AND_VALUES[0].1);
+
+            // Verify that the all fields are still present in the hash
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+
+            // Verify that the field has been set to expire
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(hash_field_ttls.len(), 1);
+            assert_eq!(hash_field_ttls[0], 1);
+
+            // Wait for the field to expire
+            sleep(Duration::from_millis(1100));
+
+            // Verify that the field has expired
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+        });
+    }
+
+    #[test]
+    fn test_hgetex_can_get_multiple_field_values_and_set_their_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let expiration_fields = [
+                HASH_FIELDS_AND_VALUES[0].0, // "f1"
+                HASH_FIELDS_AND_VALUES[1].0, // "f2"
+            ];
+
+            let hash_field_values: Vec<u8> = con
+                .hget_ex(HASH_KEY, &expiration_fields, Expiry::EX(1))
+                .unwrap();
+            assert_eq!(hash_field_values.len(), expiration_fields.len());
+            assert_eq!(hash_field_values[0], HASH_FIELDS_AND_VALUES[0].1);
+            assert_eq!(hash_field_values[1], HASH_FIELDS_AND_VALUES[1].1);
+
+            // Verify that the all fields are still present in the hash
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+
+            // Verify that the fields have been set to expire
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, &expiration_fields).unwrap();
+            assert_eq!(hash_field_ttls.len(), expiration_fields.len());
+            assert_eq!(hash_field_ttls[0], 1);
+            assert_eq!(hash_field_ttls[1], 1);
+
+            // Wait for the fields to expire
+            sleep(Duration::from_millis(1100));
+
+            // Verify that the field has expired
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - expiration_fields.len()
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &expiration_fields);
+        });
+    }
+
+    #[test]
+    fn test_hgetex_field_expiration_methods() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            // Verify that initially all fields are present in the hash
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+
+            // Set the first field to expire in 1 second
+            let getex_response: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::EX(1))
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[0].1);
+            // Set all other fields to expire in 2 seconds
+            let getex_response: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[1].0, Expiry::PX(2000))
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[1].1);
+            let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let getex_response: Vec<u8> = con
+                .hget_ex(
+                    HASH_KEY,
+                    HASH_FIELDS_AND_VALUES[2].0,
+                    Expiry::EXAT(current_timestamp.as_secs() + 2),
+                )
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[2].1);
+            let getex_response: Vec<u8> = con
+                .hget_ex(
+                    HASH_KEY,
+                    HASH_FIELDS_AND_VALUES[3].0,
+                    Expiry::PXAT(current_timestamp.as_millis() as u64 + 2000),
+                )
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[3].1);
+            let getex_response: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0, Expiry::EX(2))
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[4].1);
+            // Remove the expiration from the last field
+            let getex_response: Vec<u8> = con
+                .hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[4].0, Expiry::PERSIST)
+                .unwrap();
+            assert_eq!(getex_response[0], HASH_FIELDS_AND_VALUES[4].1);
+
+            // Wait for the first field to expire and verify it
+            sleep(Duration::from_millis(1100));
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+
+            // Wait for the remaining fields to expire and verify that only the last one field remains
+            sleep(Duration::from_millis(2100));
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &[HASH_FIELDS_AND_VALUES[4]]);
+        });
+    }
+
+    #[test]
+    fn test_hgetex_returns_nil_for_non_existing_field() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            // Delete the first field
+            let deleted_fields: Vec<u8> =
+                con.hget_del(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(deleted_fields.len(), 1);
+            assert_eq!(deleted_fields[0], HASH_FIELDS_AND_VALUES[0].1);
+
+            // Verify that the field has been deleted
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+
+            // Verify that a non-existing field returns NIL by attempting to retrieve it with HGETEX
+            let deleted_fields: redis::RedisResult<Vec<u8>> =
+                con.hget_ex(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0, Expiry::PERSIST);
+            assert!(
+                matches!(deleted_fields, Err(err) if err.kind() == redis::ErrorKind::TypeError)
+            );
+        });
+    }
+
+    #[test]
+    fn test_hgetex_returns_nil_for_non_existing_hash() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            let generated_hash_key = generate_random_testing_hash_key(&mut con);
+
+            let deleted_fields: redis::RedisResult<Vec<u8>> = con.hget_ex(
+                &generated_hash_key,
+                HASH_FIELDS_AND_VALUES[0].0,
+                Expiry::EX(1),
+            );
+            assert!(
+                matches!(deleted_fields, Err(err) if err.kind() == redis::ErrorKind::TypeError)
+            );
+        });
+    }
+
+    #[test]
+    fn test_hsetex_using_fnx_will_fail_if_there_is_an_existing_field() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options =
+                HashFieldExpirationOptions::default().set_existence_check(FieldExistenceCheck::FNX);
+
+            let fields_and_values_for_update = [
+                HASH_FIELDS_AND_VALUES[0], // This field already exists and should cause the update to fail
+                ("NonExistingField", 1),
+            ];
+
+            // Executing HSETEX with FNX on a hash that already contains the field should fail
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &fields_and_values_for_update)
+                .unwrap();
+            assert!(!field_set_successfully);
+
+            // Verify that the hash consists of its original fields
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+        });
+    }
+
+    #[test]
+    fn test_hsetex_with_fnx_in_a_non_existing_hash_succeeds_and_creates_the_hash() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            let generated_hash_key = generate_random_testing_hash_key(&mut con);
+
+            let hfe_options =
+                HashFieldExpirationOptions::default().set_existence_check(FieldExistenceCheck::FNX);
+
+            // Executing HSETEX with FNX on a hash that does not exist should succeed
+            // Since the hash does not exist, it will be created with the specified fields and values
+            let field_set_successfully: bool = con
+                .hset_ex(&generated_hash_key, &hfe_options, &HASH_FIELDS_AND_VALUES)
+                .unwrap();
+            assert!(field_set_successfully);
+
+            // Verify that the hash has been created with the expected fields and values
+            verify_exact_hash_fields_and_values(
+                &mut con,
+                &generated_hash_key,
+                &HASH_FIELDS_AND_VALUES,
+            );
+
+            // Clean up the hash
+            assert_eq!(con.del(&generated_hash_key), Ok(1));
+        });
+    }
+
+    #[test]
+    fn test_hsetex_using_fxx_will_fail_if_there_is_a_non_existing_field() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options =
+                HashFieldExpirationOptions::default().set_existence_check(FieldExistenceCheck::FXX);
+
+            let additional_fields_and_values: [(&str, u8); 2] = [
+                HASH_FIELDS_AND_VALUES[0],
+                ("NonExistingField", 1), // This field doesn't exist and should cause the update to fail
+            ];
+
+            // Executing HSETEX with FXX on a hash that does not have one or more of the fields should fail
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &additional_fields_and_values)
+                .unwrap();
+            assert!(!field_set_successfully);
+
+            // Verify that the hash consists of its original fields
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+        });
+    }
+
+    #[test]
+    fn test_hsetex_can_set_a_single_field_value_without_setting_its_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options =
+                HashFieldExpirationOptions::default().set_existence_check(FieldExistenceCheck::FXX);
+
+            // Use the HSETEX command to double the value of the first field
+            let first_field_with_doubled_value =
+                [(HASH_FIELDS_AND_VALUES[0].0, HASH_FIELDS_AND_VALUES[0].1 * 2)];
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &first_field_with_doubled_value)
+                .unwrap();
+            assert!(field_set_successfully);
+
+            // Verify that the field's value has been set to the new value
+            let hash_fields: HashMap<String, u8> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(hash_fields.len(), HASH_FIELDS_AND_VALUES.len());
+            assert_eq!(
+                hash_fields[first_field_with_doubled_value[0].0],
+                first_field_with_doubled_value[0].1
+            );
+
+            // Verify that the field is not set to expire
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(hash_field_ttls.len(), 1);
+            assert_eq!(hash_field_ttls[0], FIELD_EXISTS_WITHOUT_TTL);
+        });
+    }
+
+    #[test]
+    fn test_hsetex_can_set_multiple_field_values_without_setting_their_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options =
+                HashFieldExpirationOptions::default().set_existence_check(FieldExistenceCheck::FXX);
+
+            // Use the HSETEX command to double the values of all fields
+            let fields_with_doubled_values: Vec<(&str, u8)> = HASH_FIELDS_AND_VALUES
+                .iter()
+                .map(|(field, value)| (*field, value * 2))
+                .collect();
+            let fields_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &fields_with_doubled_values)
+                .unwrap();
+            assert!(fields_set_successfully);
+
+            // Verify that the fields' values have been set to the new values
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &fields_with_doubled_values);
+
+            // Verify that the fields are not set to expire
+            let hash_field_ttls: Vec<i8> = con
+                .httl(HASH_KEY, &HASH_FIELDS_AND_VALUES.map(|(key, _)| key))
+                .unwrap();
+            assert_eq!(hash_field_ttls.len(), HASH_FIELDS_AND_VALUES.len());
+            assert_eq!(
+                hash_field_ttls,
+                vec![FIELD_EXISTS_WITHOUT_TTL; HASH_FIELDS_AND_VALUES.len()]
+            );
+        });
+    }
+
+    #[test]
+    fn test_hsetex_can_set_a_single_field_value_and_set_its_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options = HashFieldExpirationOptions::default()
+                .set_existence_check(FieldExistenceCheck::FXX)
+                .set_expiration(SetExpiry::EX(1));
+
+            // Use the HSETEX command to double the value of the first field and set its expiration to 1 second
+            let first_field_with_doubled_value =
+                [(HASH_FIELDS_AND_VALUES[0].0, HASH_FIELDS_AND_VALUES[0].1 * 2)];
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &first_field_with_doubled_value)
+                .unwrap();
+            assert!(field_set_successfully);
+
+            // Verify that the field's value has been set to the new value
+            let hash_fields: HashMap<String, u8> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(hash_fields.len(), HASH_FIELDS_AND_VALUES.len());
+            assert_eq!(
+                hash_fields[first_field_with_doubled_value[0].0],
+                first_field_with_doubled_value[0].1
+            );
+
+            // Verify that the field was set to expire
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(hash_field_ttls.len(), 1);
+            assert_eq!(hash_field_ttls[0], 1);
+
+            // Wait for the field to expire
+            sleep(Duration::from_millis(1100));
+
+            // Verify that the field has expired
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - first_field_with_doubled_value.len()
+            );
+            verify_fields_absence_from_hash(
+                &remaining_hash_fields,
+                &[first_field_with_doubled_value[0].0],
+            );
+        });
+    }
+
+    #[test]
+    fn test_hsetex_can_set_multiple_field_values_and_set_their_expiration() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options = HashFieldExpirationOptions::default()
+                .set_existence_check(FieldExistenceCheck::FXX)
+                .set_expiration(SetExpiry::EX(1));
+
+            // Use the HSETEX command to double the values of all fields and set their expiration to 1 second
+            let fields_with_doubled_values: Vec<(&str, u8)> = HASH_FIELDS_AND_VALUES
+                .iter()
+                .map(|(field, value)| (*field, value * 2))
+                .collect();
+            let fields_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &fields_with_doubled_values)
+                .unwrap();
+            assert!(fields_set_successfully);
+
+            // Verify that the fields' values have been set to the new values
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &fields_with_doubled_values);
+
+            // Verify that the fields were set to expire
+            let fields = HASH_FIELDS_AND_VALUES.map(|(key, _)| key);
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, &fields).unwrap();
+            assert_eq!(hash_field_ttls.len(), HASH_FIELDS_AND_VALUES.len());
+            assert_eq!(hash_field_ttls, vec![1; HASH_FIELDS_AND_VALUES.len()]);
+
+            // Wait for the fields to expire
+            sleep(Duration::from_millis(1100));
+
+            // Verify that the fields have expired
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - fields_with_doubled_values.len()
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &fields);
+        });
+    }
+
+    #[test]
+    fn test_hsetex_field_expiration_methods() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            // Verify that initially all fields are present in the hash
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+
+            // Set the first field to expire in 1 second
+            let hfe_options = HashFieldExpirationOptions::default()
+                .set_existence_check(FieldExistenceCheck::FXX)
+                .set_expiration(SetExpiry::EX(1));
+
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[0]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            // Set all other fields to expire in 2 seconds
+            let hfe_options = hfe_options.set_expiration(SetExpiry::PX(2000));
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[1]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            let current_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+            let hfe_options =
+                hfe_options.set_expiration(SetExpiry::EXAT(current_timestamp.as_secs() + 2));
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[2]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            let hfe_options = hfe_options
+                .set_expiration(SetExpiry::PXAT(current_timestamp.as_millis() as u64 + 2000));
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[3]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            let hfe_options = hfe_options.set_expiration(SetExpiry::EX(2));
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[4]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            // Using KEEPTTL will preserve the 2 seconds set above
+            let hfe_options = hfe_options.set_expiration(SetExpiry::KEEPTTL);
+            let expiration_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[4]])
+                .unwrap();
+            assert!(expiration_set_successfully);
+
+            // Wait for the first field to expire and verify it
+            sleep(Duration::from_millis(1100));
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+
+            // Wait for the remaining fields to expire and verify that only the last one field remains
+            sleep(Duration::from_millis(2100));
+
+            // Verify that all fields have expired and the hash no longer exists
+            let hash_exists: bool = con.exists(HASH_KEY).unwrap();
+            assert!(!hash_exists);
+        });
+    }
+
+    #[test]
+    fn test_hsetex_can_update_the_expiration_of_a_field_that_has_already_been_set_to_expire() {
+        run_test_if_version_supported(&HASH_FIELD_EXPIRATION_MINIMUM_REQUIRED_VERSION, |ctx| {
+            let mut con = ctx.connection();
+
+            assert_eq!(con.hset_multiple(HASH_KEY, &HASH_FIELDS_AND_VALUES), Ok(()));
+
+            let hfe_options = HashFieldExpirationOptions::default()
+                .set_existence_check(FieldExistenceCheck::FXX)
+                .set_expiration(SetExpiry::EX(1));
+
+            // Use the HSETEX command to set the first field to expire in 1 second
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[0]])
+                .unwrap();
+            assert!(field_set_successfully);
+
+            // Use the HSETEX command again to set the timeout to 2 seconds
+            let hfe_options = hfe_options.set_expiration(SetExpiry::EX(2));
+            let field_set_successfully: bool = con
+                .hset_ex(HASH_KEY, &hfe_options, &[HASH_FIELDS_AND_VALUES[0]])
+                .unwrap();
+            assert!(field_set_successfully);
+            // Verify that all of the fields still have their initial values
+            verify_exact_hash_fields_and_values(&mut con, HASH_KEY, &HASH_FIELDS_AND_VALUES);
+
+            // Verify that the field was set to expire
+            let hash_field_ttls: Vec<i8> = con.httl(HASH_KEY, HASH_FIELDS_AND_VALUES[0].0).unwrap();
+            assert_eq!(hash_field_ttls.len(), 1);
+            assert_eq!(hash_field_ttls[0], 2);
+
+            // Wait for the field to expire
+            sleep(Duration::from_millis(2100));
+
+            // Verify that the field has expired
+            let remaining_hash_fields: HashMap<String, String> = con.hgetall(HASH_KEY).unwrap();
+            assert_eq!(
+                remaining_hash_fields.len(),
+                HASH_FIELDS_AND_VALUES.len() - 1
+            );
+            verify_fields_absence_from_hash(&remaining_hash_fields, &[HASH_FIELDS_AND_VALUES[0].0]);
+        });
     }
 
     // Requires redis-server >= 4.0.0.
