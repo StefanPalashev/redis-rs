@@ -610,6 +610,7 @@ pub use crate::types::{
     // utility types
     InfoDict,
     NumericBehavior,
+    EmbeddingInput,
     Expiry,
     SetExpiry,
     ExistenceCheck,
