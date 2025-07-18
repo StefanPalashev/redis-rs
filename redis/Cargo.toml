@@ -113,6 +113,11 @@ hashbrown = { version = "0.16", optional = true }
 
 lru = { version = "0.16", optional = true }
 
+# Only needed for Entra ID authentication
+azure_identity = { version = "0.25", optional = true, features = ["client_certificate"] }
+azure_core = { version = "0.25", optional = true }
+time = { version = "0.3", optional = true }
+
 [features]
 default = ["acl", "streams", "geospatial", "script", "keep-alive", "num-bigint"]
 acl = []
@@ -156,6 +161,7 @@ cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
 safe_iterators = []
+entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "aio"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead
@@ -288,3 +294,7 @@ name = "typed"
 [[example]]
 name = "async-caching"
 required-features = ["tokio-comp", "cache-aio"]
+
+[[example]]
+name = "entra_id_auth"
+required-features = ["entra-id", "tokio-comp"]

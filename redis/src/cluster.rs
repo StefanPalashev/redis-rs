@@ -1129,6 +1129,7 @@ pub(crate) fn get_connection_info(
             username: cluster_params.username,
             protocol: cluster_params.protocol.unwrap_or_default(),
             db: 0,
+            credentials_provider: None,
         },
     })
 }

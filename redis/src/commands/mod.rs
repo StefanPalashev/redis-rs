@@ -1,7 +1,7 @@
 #![allow(unused_parens)]
 
 use crate::cmd::{cmd, Cmd, Iter};
-use crate::connection::{Connection, ConnectionLike, Msg};
+use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
@@ -39,7 +39,6 @@ use crate::streams;
 
 #[cfg(feature = "acl")]
 use crate::acl;
-use crate::RedisConnectionInfo;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
 pub(crate) fn is_readonly_cmd(cmd: &[u8]) -> bool {
@@ -3926,7 +3925,9 @@ impl ToRedisArgs for VSimOptions {
 pub fn resp3_hello(connection_info: &RedisConnectionInfo) -> Cmd {
     let mut hello_cmd = cmd("HELLO");
     hello_cmd.arg("3");
-    if let Some(password) = &connection_info.password {
+
+    // Try to get password from either static password or credentials provider
+    if let Ok(Some(password)) = connection_info.get_auth_password() {
         let username: &str = match connection_info.username.as_ref() {
             None => "default",
             Some(username) => username,

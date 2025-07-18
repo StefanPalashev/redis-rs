@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::{Duration, Instant};
 
+use crate::auth::CredentialsProvider;
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
@@ -238,7 +239,7 @@ pub struct ConnectionInfo {
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
-#[derive(Clone, Debug, Default)]
+#[derive(Default, Clone, Debug)]
 pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub db: i64,
@@ -248,6 +249,34 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
+    /// Optional credentials provider for dynamic authentication (e.g., token-based auth)
+    pub credentials_provider: Option<Box<dyn CredentialsProvider>>,
+}
+
+impl RedisConnectionInfo {
+    /// Set a credentials provider for this connection
+    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: CredentialsProvider + 'static,
+    {
+        self.credentials_provider = Some(Box::new(provider));
+        self
+    }
+
+    /// Get the current authentication password, either from static password or credentials provider
+    pub fn get_auth_password(&self) -> RedisResult<Option<String>> {
+        if let Some(ref provider) = self.credentials_provider {
+            let credentials = provider.get_credentials()?;
+            Ok(Some(credentials.token))
+        } else {
+            Ok(self.password.clone())
+        }
+    }
+
+    /// Check if any form of authentication is configured
+    pub fn has_authentication(&self) -> bool {
+        self.password.is_some() || self.credentials_provider.is_some()
+    }
 }
 
 impl FromStr for ConnectionInfo {
@@ -425,6 +454,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
             protocol: parse_protocol(&query)?,
+            credentials_provider: None,
         },
     })
 }
@@ -447,6 +477,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
             protocol: parse_protocol(&query)?,
+            credentials_provider: None,
         },
     })
 }
@@ -1145,12 +1176,36 @@ pub(crate) fn connection_setup_pipeline(
         if connection_info.protocol != ProtocolVersion::RESP2 {
             pipeline.add_command(resp3_hello(connection_info));
             (Some(0), None)
-        } else if connection_info.password.is_some() {
-            pipeline.add_command(authenticate_cmd(
-                connection_info,
-                check_username,
-                connection_info.password.as_ref().unwrap(),
-            ));
+        } else if connection_info.has_authentication() {
+            // Get password from either static password or credentials provider
+            let password = match connection_info.get_auth_password() {
+                Ok(Some(pwd)) => pwd,
+                Ok(None) => {
+                    return (
+                        pipeline,
+                        ConnectionSetupComponents {
+                            resp3_auth_cmd_idx: None,
+                            resp2_auth_cmd_idx: None,
+                            select_cmd_idx: None,
+                            #[cfg(feature = "cache-aio")]
+                            cache_cmd_idx: None,
+                        },
+                    )
+                }
+                Err(_) => {
+                    return (
+                        pipeline,
+                        ConnectionSetupComponents {
+                            resp3_auth_cmd_idx: None,
+                            resp2_auth_cmd_idx: None,
+                            select_cmd_idx: None,
+                            #[cfg(feature = "cache-aio")]
+                            cache_cmd_idx: None,
+                        },
+                    )
+                }
+            };
+            pipeline.add_command(authenticate_cmd(connection_info, check_username, &password));
             (None, Some(0))
         } else {
             (None, None)
@@ -2399,6 +2454,7 @@ mod tests {
                         username: None,
                         password: None,
                         protocol: ProtocolVersion::RESP2,
+                        credentials_provider: None,
                     },
                 },
             ),
