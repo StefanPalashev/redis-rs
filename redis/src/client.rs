@@ -5,10 +5,12 @@ use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
 use crate::{
-    auth::CredentialsProvider,
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
+#[cfg(feature = "token-based-authentication")]
+use crate::StreamingCredentialsProvider;
+
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
@@ -80,9 +82,10 @@ impl Client {
 
     /// Creates a new client with a credentials provider for authentication.
     /// This is useful for token-based authentication like Azure Entra ID.
+    #[cfg(feature = "token-based-authentication")]
     pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
     where
-        P: CredentialsProvider + 'static,
+        P: StreamingCredentialsProvider + 'static,
     {
         self.connection_info.redis = self
             .connection_info

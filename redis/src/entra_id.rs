@@ -27,6 +27,8 @@
 //! # }
 //! ```
 
+#[cfg(all(feature = "entra-id"))]
+use crate::auth::BasicAuth;
 #[cfg(feature = "entra-id")]
 use crate::auth::{AsyncCredentialsProvider, AuthCredentials, CredentialsProvider};
 #[cfg(feature = "entra-id")]
@@ -299,7 +301,7 @@ impl EntraIdCredentialsProvider {
 
 #[cfg(feature = "entra-id")]
 impl CredentialsProvider for EntraIdCredentialsProvider {
-    fn get_credentials(&self) -> RedisResult<AuthCredentials> {
+    fn get_credentials(&self) -> RedisResult<BasicAuth> {
         // For sync implementation, we need to use a runtime
         // This is not ideal but necessary for the sync trait
 
@@ -320,43 +322,52 @@ impl CredentialsProvider for EntraIdCredentialsProvider {
                 .await
                 .map_err(Self::convert_error)?;
 
-            let expires_at = SystemTime::UNIX_EPOCH
+            let _expires_at = SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(token_response.expires_on.unix_timestamp() as u64);
 
-            Ok(AuthCredentials::with_expiration(
-                token_response.token.secret().to_string(),
-                expires_at,
-            ))
+            // Ok(AuthCredentials::with_expiration(
+            //     token_response.token.secret().to_string(),
+            //     expires_at,
+            // ))
+            Ok(BasicAuth {
+                username: "Bearer".to_string(),
+                password: token_response.token.secret().to_string(),
+            })
         })
     }
 
-    fn clone_box(&self) -> Box<dyn CredentialsProvider> {
-        // Note: The credential cannot be cloned directly since TokenCredential doesn't implement Clone
-        // This is a limitation - each provider instance should be used independently
-        // Note 2: Maybe this should be removed in general from the CrendentialsProvider trait.
-        panic!("EntraIdCredentialsProvider cannot be cloned due to Azure Identity limitations. Create separate instances instead.")
-    }
+    // fn clone_box(&self) -> Box<dyn CredentialsProvider> {
+    //     // Note: The credential cannot be cloned directly since TokenCredential doesn't implement Clone
+    //     // This is a limitation - each provider instance should be used independently
+    //     // Note 2: Maybe this should be removed in general from the CrendentialsProvider trait.
+    //     panic!("EntraIdCredentialsProvider cannot be cloned due to Azure Identity limitations. Create separate instances instead.")
+    // }
 }
 
-#[cfg(all(feature = "entra-id", feature = "aio"))]
-impl AsyncCredentialsProvider for EntraIdCredentialsProvider {
-    async fn get_credentials(&self) -> RedisResult<AuthCredentials> {
-        let scopes: Vec<&str> = self.scopes.iter().map(|s| s.as_str()).collect();
-        let token_response = self
-            .credential
-            .get_token(&scopes, None)
-            .await
-            .map_err(Self::convert_error)?;
+// #[cfg(all(feature = "entra-id", feature = "aio"))]
+// impl AsyncCredentialsProvider for EntraIdCredentialsProvider {
+//     fn get_credentials(&self) -> RedisResult<BasicAuth> {
+//         let scopes: Vec<&str> = self.scopes.iter().map(|s| s.as_str()).collect();
+//         let token_response = self
+//             .credential
+//             .get_token(&scopes, None)
+//             .await
+//             .map_err(Self::convert_error)?;
 
-        let expires_at = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(token_response.expires_on.unix_timestamp() as u64);
+//         let _expires_at = SystemTime::UNIX_EPOCH
+//             + std::time::Duration::from_secs(token_response.expires_on.unix_timestamp() as u64);
 
-        Ok(AuthCredentials::with_expiration(
-            token_response.token.secret().to_string(),
-            expires_at,
-        ))
-    }
-}
+//         // Ok(AuthCredentials::with_expiration(
+//         //     token_response.token.secret().to_string(),
+//         //     expires_at,
+//         // ))
+//         // This is a sample
+//         Ok(BasicAuth {
+//             username: "Bearer".to_string(),
+//             password: token_response.token.secret().to_string(),
+//         })
+//     }
+// }
 
 #[cfg(all(feature = "entra-id", test))]
 mod tests {
