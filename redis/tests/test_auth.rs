@@ -6,21 +6,45 @@ use std::time::{Duration, SystemTime};
 
 #[test]
 fn test_auth_credentials_creation() {
+    let before = SystemTime::now();
     let creds = AuthCredentials::new("test_token".to_string());
+    let after = SystemTime::now();
+
     assert_eq!(creds.token, "test_token");
     assert!(creds.expires_at.is_none());
     assert!(!creds.is_expired());
+
+    // Verify received_at is set to current time
+    assert!(creds.received_at >= before);
+    assert!(creds.received_at <= after);
+
+    // Test credentials refresh eligibility
+    // Credentials with no expiration are never eligible for refresh regardless of the refresh threshold
+    assert!(!creds.eligible_for_refresh(Duration::ZERO));
+    assert!(!creds.eligible_for_refresh(Duration::from_secs(1800)));
 }
 
 #[test]
 fn test_auth_credentials_with_expiration() {
+    let before = SystemTime::now();
     let future_time = SystemTime::now() + Duration::from_secs(3600);
     let creds = AuthCredentials::with_expiration("test_token".to_string(), future_time);
+    let after = SystemTime::now();
+
     assert_eq!(creds.token, "test_token");
     assert!(creds.expires_at.is_some());
     assert!(!creds.is_expired());
-    assert!(!creds.expires_within(Duration::from_secs(1800))); // 30 minutes
-    assert!(creds.expires_within(Duration::from_secs(7200))); // 2 hours
+
+    // Verify received_at is set to current time
+    assert!(creds.received_at >= before);
+    assert!(creds.received_at <= after);
+
+    // Test credentials refresh eligibility
+    // Credentials with no refresh threshold are always eligible for refresh
+    assert!(creds.eligible_for_refresh(Duration::ZERO));
+
+    // Fresh credentials with 1 hour expiry should not be eligible for refresh within the first 30 minutes
+    assert!(!creds.eligible_for_refresh(Duration::from_secs(1800)));
 }
 
 #[test]

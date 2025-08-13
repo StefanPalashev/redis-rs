@@ -9,6 +9,8 @@ pub struct AuthCredentials {
     pub token: String,
     /// Optional expiration time for the token
     pub expires_at: Option<SystemTime>,
+    /// The time when the credentials were received/created
+    pub received_at: SystemTime,
 }
 
 impl AuthCredentials {
@@ -17,6 +19,7 @@ impl AuthCredentials {
         Self {
             token,
             expires_at: None,
+            received_at: SystemTime::now(),
         }
     }
 
@@ -25,10 +28,11 @@ impl AuthCredentials {
         Self {
             token,
             expires_at: Some(expires_at),
+            received_at: SystemTime::now(),
         }
     }
 
-    /// Check if the credentials are expired
+    /// Check if the credentials have expired
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             SystemTime::now() >= expires_at
@@ -37,13 +41,15 @@ impl AuthCredentials {
         }
     }
 
-    /// Check if the credentials will expire within the given duration
-    pub fn expires_within(&self, duration: std::time::Duration) -> bool {
-        if let Some(expires_at) = self.expires_at {
-            if let Ok(time_until_expiry) = expires_at.duration_since(SystemTime::now()) {
-                time_until_expiry <= duration
-            } else {
-                true // Already expired
+    /// Check if the credentials are eligible for refresh.
+    /// Note that only credentials with an expiration time are considered for refresh.
+    ///
+    /// If the time elapsed since the credentials were received is greater than the refresh threshold, the credentials are considered eligible for refresh.
+    pub fn eligible_for_refresh(&self, refresh_threshold: std::time::Duration) -> bool {
+        if self.expires_at.is_some() {
+            match SystemTime::now().duration_since(self.received_at) {
+                Ok(elapsed_time) => elapsed_time >= refresh_threshold,
+                Err(_) => true, // Should be unreachable. Force refresh just in case.
             }
         } else {
             false // No expiration
@@ -172,18 +178,24 @@ impl Default for RetryConfig {
 mod token_manager_common {
     use super::*;
 
-    /// Check if credentials should be refreshed based on expiration ratio
-    pub fn should_refresh(creds: &AuthCredentials, config: &TokenRefreshConfig) -> bool {
-        if creds.is_expired() {
+    /// Check if the provided credentials should be refreshed based on the expiration ratio in the provided config
+    pub fn should_refresh_credentials_based_on_config(
+        credentials: &AuthCredentials,
+        config: &TokenRefreshConfig,
+    ) -> bool {
+        if credentials.is_expired() {
             return true;
         }
 
-        if let Some(expires_at) = creds.expires_at {
-            if let Ok(total_lifetime) = expires_at.duration_since(SystemTime::now()) {
+        if let Some(expires_at) = credentials.expires_at {
+            if let Ok(total_lifetime) = expires_at.duration_since(credentials.received_at) {
                 let refresh_threshold = Duration::from_secs_f64(
                     total_lifetime.as_secs_f64() * config.expiration_refresh_ratio,
                 );
-                return creds.expires_within(refresh_threshold);
+                return credentials.eligible_for_refresh(refresh_threshold);
+            } else {
+                // If the duration is somehow negative, consider the credentials as expired and force refresh
+                return true;
             }
         }
 
@@ -253,7 +265,10 @@ where
     pub fn get_credentials(&self) -> RedisResult<AuthCredentials> {
         if let Ok(cached) = self.cached_credentials.lock() {
             if let Some(ref creds) = *cached {
-                if !token_manager_common::should_refresh(creds, &self.config) {
+                if !token_manager_common::should_refresh_credentials_based_on_config(
+                    creds,
+                    &self.config,
+                ) {
                     return Ok(creds.clone());
                 }
             }
@@ -334,7 +349,10 @@ where
         {
             let cached = self.cached_credentials.lock().await;
             if let Some(ref creds) = *cached {
-                if !token_manager_common::should_refresh(creds, &self.config) {
+                if !token_manager_common::should_refresh_credentials_based_on_config(
+                    creds,
+                    &self.config,
+                ) {
                     return Ok(creds.clone());
                 }
             }
@@ -468,47 +486,5 @@ impl<P> Drop for AsyncTokenRefreshService<P> {
         if let Some(sender) = self.shutdown_sender.take() {
             let _ = sender.send(());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn test_auth_credentials_creation() {
-        let creds = AuthCredentials::new("test_token".to_string());
-        assert_eq!(creds.token, "test_token");
-        assert!(creds.expires_at.is_none());
-        assert!(!creds.is_expired());
-    }
-
-    #[test]
-    fn test_auth_credentials_with_expiration() {
-        let future_time = SystemTime::now() + Duration::from_secs(3600);
-        let creds = AuthCredentials::with_expiration("test_token".to_string(), future_time);
-        assert_eq!(creds.token, "test_token");
-        assert!(creds.expires_at.is_some());
-        assert!(!creds.is_expired());
-        assert!(!creds.expires_within(Duration::from_secs(1800))); // 30 minutes
-        assert!(creds.expires_within(Duration::from_secs(7200))); // 2 hours
-    }
-
-    #[test]
-    fn test_static_credentials_provider() {
-        let provider = StaticCredentialsProvider::new("static_token".to_string());
-        let creds = CredentialsProvider::get_credentials(&provider).unwrap();
-        assert_eq!(creds.token, "static_token");
-    }
-
-    #[cfg(feature = "aio")]
-    #[tokio::test]
-    async fn test_async_static_credentials_provider() {
-        let provider = StaticCredentialsProvider::new("async_token".to_string());
-        let creds = AsyncCredentialsProvider::get_credentials(&provider)
-            .await
-            .unwrap();
-        assert_eq!(creds.token, "async_token");
     }
 }
