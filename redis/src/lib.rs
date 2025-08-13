@@ -596,11 +596,15 @@ let primary = sentinel.get_async_connection().await.unwrap();
 )]
 
 // public api
-#[cfg(feature = "aio")]
-pub use crate::auth::{AsyncCredentialsProvider, AsyncTokenManager, AsyncTokenRefreshService};
+#[cfg(feature = "token-based-authentication")]
 pub use crate::auth::{
-    AuthCredentials, CredentialsProvider, RetryConfig, StaticCredentialsProvider, TokenManager,
-    TokenRefreshConfig,
+    AuthCredentials, BasicAuth, CredentialsProvider, StaticCredentialsProvider,
+    AsyncCredentialsProvider, StreamingCredentialsListener,
+    StreamingCredentialsProvider, AsyncConnectionReAuthenticator,
+};
+#[cfg(feature = "token-based-authentication")]
+pub use crate::auth_management::{
+    TokenRefreshConfig, TokenRefreshServiceConfig, RetryConfig, TokenManager,
 };
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;
@@ -765,7 +769,13 @@ pub mod caching;
 #[cfg_attr(docsrs, doc(cfg(feature = "entra-id")))]
 pub mod entra_id;
 
-mod auth;
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth;
+#[cfg(feature = "token-based-authentication")]
+#[cfg_attr(docsrs, doc(cfg(feature = "token-based-authentication")))]
+pub mod auth_management;
+
 mod client;
 mod cmd;
 mod commands;

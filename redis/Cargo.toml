@@ -50,6 +50,7 @@ tokio = { version = "1", features = [
   "net",
   "time",
   "sync",
+  "macros"
 ], optional = true }
 socket2 = { version = "0.6", features = ["all"] }
 
@@ -161,7 +162,8 @@ cache-aio = ["aio", "dep:lru"]
 r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
 safe_iterators = []
-entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "aio"]
+token-based-authentication = ["aio"]
+entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "token-based-authentication"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead

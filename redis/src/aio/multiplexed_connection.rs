@@ -4,6 +4,8 @@ use crate::aio::setup_connection;
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::parser::ValueCodec;
 use crate::types::{closed_connection_error, RedisError, RedisFuture, RedisResult, Value};
+#[cfg(feature = "token-based-authentication")]
+use crate::StreamingCredentialsProvider;
 use crate::{
     check_resp3, cmd, cmd::Cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo,
     RedisConnectionInfo, ToRedisArgs,
@@ -437,6 +439,8 @@ pub struct MultiplexedConnection {
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
+    /// Connection info for re-authentication purposes
+    connection_info: RedisConnectionInfo,
 }
 
 impl Debug for MultiplexedConnection {
@@ -524,9 +528,18 @@ impl MultiplexedConnection {
             })
             .transpose()?;
 
+        //
+        let mut connection_info = connection_info.clone();
+
+        if let Some(ref cp) = connection_info.credentials_provider {
+            // Get credentials from provider and set as password
+            let creds = cp.get_credentials().await?;
+            connection_info.password = Some(creds.password);
+        }
+
         setup_connection(
             &mut codec,
-            connection_info,
+            &connection_info,
             #[cfg(feature = "cache-aio")]
             cache_config,
         )
@@ -552,8 +565,15 @@ impl MultiplexedConnection {
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
+            connection_info: connection_info.clone(),
         };
 
+        // Set up streaming credentials subscription if provider is available
+        if let Some(streaming_provider) = connection_info.credentials_provider {
+            let _subscription = con.subscribe_to_credentials_updates(streaming_provider);
+            // TODO: Store subscription for cleanup when connection is dropped
+        }
+        
         Ok((con, driver))
     }
 
@@ -756,6 +776,29 @@ impl MultiplexedConnection {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "token-based-authentication")]
+use crate::auth::{AsyncConnectionReAuthenticator};
+
+#[cfg(feature = "token-based-authentication")]
+impl MultiplexedConnection {
+    /// Re-authenticate the connection with new credentials
+    pub fn subscribe_to_credentials_updates(&self, streaming_credentials_provider: Box<dyn StreamingCredentialsProvider>) 
+    -> Box<dyn crate::auth::Disposable> {
+        streaming_credentials_provider
+            .subscribe(Arc::new(AsyncConnectionReAuthenticator::new(self.clone())))
+    }
+
+    /// Re-authenticate the connection with new credentials
+    ///
+    /// This method allows existing async connections to update their authentication
+    /// when tokens are refreshed, enabling streaming credential updates.
+    pub async fn re_authenticate_with_credentials(&mut self, credentials: &crate::auth::BasicAuth) -> RedisResult<()> {
+        let auth_cmd = crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
+        self.send_packed_command(&auth_cmd).await?;
         Ok(())
     }
 }
