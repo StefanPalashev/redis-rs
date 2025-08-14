@@ -5,6 +5,7 @@ use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
 use crate::{
+    auth::CredentialsProvider,
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
@@ -75,6 +76,19 @@ impl Client {
     /// Returns a reference of client connection info object.
     pub fn get_connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
+    }
+
+    /// Creates a new client with a credentials provider for authentication.
+    /// This is useful for token-based authentication like Azure Entra ID.
+    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: CredentialsProvider + 'static,
+    {
+        self.connection_info.redis = self
+            .connection_info
+            .redis
+            .with_credentials_provider(provider);
+        self
     }
 
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.
