@@ -8,6 +8,9 @@ use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
+#[cfg(feature = "token-based-authentication")]
+use crate::StreamingCredentialsProvider;
+
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
@@ -75,6 +78,20 @@ impl Client {
     /// Returns a reference of client connection info object.
     pub fn get_connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
+    }
+
+    /// Creates a new client with a credentials provider for authentication.
+    /// This is useful for token-based authentication like Azure Entra ID.
+    #[cfg(feature = "token-based-authentication")]
+    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.connection_info.redis = self
+            .connection_info
+            .redis
+            .with_credentials_provider(provider);
+        self
     }
 
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.

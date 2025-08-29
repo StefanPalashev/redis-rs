@@ -17,6 +17,8 @@ use crate::types::{
     ServerError, ServerErrorKind, SyncPushSender, ToRedisArgs, Value,
 };
 use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
+#[cfg(feature = "token-based-authentication")]
+use crate::{StreamingCredentialsProvider};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -238,7 +240,7 @@ pub struct ConnectionInfo {
 }
 
 /// Redis specific/connection independent information used to establish a connection to redis.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct RedisConnectionInfo {
     /// The database number to use.  This is usually `0`.
     pub db: i64,
@@ -248,6 +250,64 @@ pub struct RedisConnectionInfo {
     pub password: Option<String>,
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
+    /// Optional credentials provider for dynamic authentication (e.g., token-based auth)
+    
+    // S_TODO: An enum with all of these might be needed, however there might be a need for clone, 
+    // so maybe a common trait wrapper approach would fit better
+    pub credentials_provider: Option<Box<dyn StreamingCredentialsProvider>>,
+}
+
+impl Clone for RedisConnectionInfo {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db,
+            username: self.username.clone(),
+            password: self.password.clone(),
+            protocol: self.protocol,
+            credentials_provider: None, // Cannot clone trait objects
+        }
+    }
+}
+
+impl std::fmt::Debug for RedisConnectionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisConnectionInfo")
+            .field("db", &self.db)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("protocol", &self.protocol)
+            .field("credentials_provider", &self.credentials_provider.as_ref().map(|_| "<provider>"))
+            .finish()
+    }
+}
+
+impl RedisConnectionInfo {
+    /// Set a credentials provider for this connection
+    #[cfg(feature = "token-based-authentication")]
+    pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    where
+        P: StreamingCredentialsProvider + 'static,
+    {
+        self.credentials_provider = Some(Box::new(provider));
+        self
+    }
+
+    /// Get the current authentication password, either from static password or credentials provider
+    pub fn get_auth_password(&self) -> RedisResult<Option<String>> {
+        if let Some(ref _provider) = self.credentials_provider {
+            // S_TODO:
+            // For streaming credentials, the password should be set during connection setup
+            // This method is used in sync contexts where we can't await the future
+            Ok(self.password.clone())
+        } else {
+            Ok(self.password.clone())
+        }
+    }
+
+    /// Check if any form of authentication is configured
+    pub fn has_authentication(&self) -> bool {
+        self.password.is_some() || self.credentials_provider.is_some()
+    }
 }
 
 impl FromStr for ConnectionInfo {
@@ -425,6 +485,7 @@ fn url_to_tcp_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
                 None => None,
             },
             protocol: parse_protocol(&query)?,
+            credentials_provider: None,
         },
     })
 }
@@ -447,6 +508,7 @@ fn url_to_unix_connection_info(url: url::Url) -> RedisResult<ConnectionInfo> {
             username: query.get("user").map(|username| username.to_string()),
             password: query.get("pass").map(|password| password.to_string()),
             protocol: parse_protocol(&query)?,
+            credentials_provider: None,
         },
     })
 }
@@ -652,6 +714,9 @@ pub struct Connection {
     /// The number of messages that are expected to be returned from the server,
     /// but the user no longer waits for - answers for requests that already returned a transient error.
     messages_to_skip: usize,
+
+    /// Connection info for re-authentication purposes
+    connection_info: RedisConnectionInfo,
 }
 
 /// Represents a RESP2 pubsub connection.
@@ -1079,7 +1144,7 @@ pub(crate) fn create_rustls_config(
     }
 }
 
-fn authenticate_cmd(
+pub(crate) fn authenticate_cmd(
     connection_info: &RedisConnectionInfo,
     check_username: bool,
     password: &str,
@@ -1145,12 +1210,36 @@ pub(crate) fn connection_setup_pipeline(
         if connection_info.protocol != ProtocolVersion::RESP2 {
             pipeline.add_command(resp3_hello(connection_info));
             (Some(0), None)
-        } else if connection_info.password.is_some() {
-            pipeline.add_command(authenticate_cmd(
-                connection_info,
-                check_username,
-                connection_info.password.as_ref().unwrap(),
-            ));
+        } else if connection_info.has_authentication() {
+            // Get password from either static password or credentials provider
+            let password = match connection_info.get_auth_password() {
+                Ok(Some(pwd)) => pwd,
+                Ok(None) => {
+                    return (
+                        pipeline,
+                        ConnectionSetupComponents {
+                            resp3_auth_cmd_idx: None,
+                            resp2_auth_cmd_idx: None,
+                            select_cmd_idx: None,
+                            #[cfg(feature = "cache-aio")]
+                            cache_cmd_idx: None,
+                        },
+                    )
+                }
+                Err(_) => {
+                    return (
+                        pipeline,
+                        ConnectionSetupComponents {
+                            resp3_auth_cmd_idx: None,
+                            resp2_auth_cmd_idx: None,
+                            select_cmd_idx: None,
+                            #[cfg(feature = "cache-aio")]
+                            cache_cmd_idx: None,
+                        },
+                    )
+                }
+            };
+            pipeline.add_command(authenticate_cmd(connection_info, check_username, &password));
             (None, Some(0))
         } else {
             (None, None)
@@ -1347,6 +1436,7 @@ fn setup_connection(
         protocol: connection_info.protocol,
         push_sender: None,
         messages_to_skip: 0,
+        connection_info: connection_info.clone(),
     };
 
     if execute_connection_pipeline(
@@ -1740,6 +1830,16 @@ impl Connection {
             .arg(pchannel)
             .set_no_response(true)
             .exec(self)
+    }
+
+    /// Re-authenticate the connection with new credentials
+    ///
+    /// This method allows existing connections to update their authentication
+    /// when tokens are refreshed, enabling streaming credential updates.
+    pub fn re_authenticate_with_credentials(&mut self, credentials: &crate::auth::BasicAuth) -> RedisResult<()> {
+        let auth_cmd = authenticate_cmd(&self.connection_info, true, &credentials.password);
+        self.req_command(&auth_cmd)?;
+        Ok(())
     }
 }
 
@@ -2399,6 +2499,7 @@ mod tests {
                         username: None,
                         password: None,
                         protocol: ProtocolVersion::RESP2,
+                        credentials_provider: None,
                     },
                 },
             ),

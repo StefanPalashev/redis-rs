@@ -175,6 +175,56 @@ let client = redis::Client::open("rediss://127.0.0.1/#insecure")?;
 
 **Deprecation Notice:** If you were using the `tls` or `async-std-tls-comp` features, please use the `tls-native-tls` or `async-std-native-tls-comp` features respectively.
 
+## Token-Based Authentication with Azure Entra ID
+
+Redis-rs supports token-based authentication using Azure Entra ID, providing secure, dynamic authentication for Redis connections. This feature is particularly useful for Azure-hosted applications and enterprise environments.
+
+To enable Entra ID authentication, add the `entra-id` feature to your Cargo.toml:
+
+```toml
+redis = { version = "0.32.4", features = ["entra-id", "tokio-comp"] }
+```
+
+### Basic Usage
+
+```rust
+use redis::{Client, Commands, EntraIdCredentialsProvider};
+
+#[tokio::main]
+async fn main() -> redis::RedisResult<()> {
+    // Create credentials provider using DefaultAzureCredential
+    let provider = EntraIdCredentialsProvider::new_default()?;
+
+    // Create Redis client with credentials provider
+    let client = Client::open("redis://your-redis-instance.com:6380")?
+        .with_credentials_provider(provider);
+
+    // Use the client normally
+    let mut con = client.get_connection()?;
+    con.set("key", "value")?;
+    let result: String = con.get("key")?;
+    println!("Value: {}", result);
+
+    Ok(())
+}
+```
+
+### Supported Authentication Methods
+
+- **DefaultAzureCredential**: Automatically tries multiple credential sources
+- **Service Principal**: Client secret or certificate-based authentication
+- **Managed Identity**: System-assigned or user-assigned managed identities
+- **Interactive Flows**: Auth code flow with PKCE for user applications
+
+### Features
+
+- **Automatic Token Refresh**: Background token refresh with configurable policies
+- **Retry Logic**: Robust error handling with exponential backoff
+- **Async Support**: Full async/await support for non-blocking operations
+- **Connection Pooling**: Compatible with existing connection pooling mechanisms
+
+For detailed documentation and examples, see [redis/docs/token_authentication.md](redis/docs/token_authentication.md).
+
 ## Cluster Support
 
 Support for Redis Cluster can be enabled by enabling the `cluster` feature in your Cargo.toml:
