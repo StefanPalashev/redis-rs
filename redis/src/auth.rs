@@ -3,7 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::future::Future;
-use futures_util::Stream;
+#[cfg(feature = "token-based-authentication")]
+use futures_util::stream::BoxStream;
 
 /// Basic authentication credentials for Redis connection
 #[cfg(feature = "token-based-authentication")]
@@ -112,21 +113,21 @@ pub trait StreamingCredentialsListener: Send + Sync + 'static {
 pub trait StreamingCredentialsProvider: Send + Sync {
     /// Get the current authentication credentials
     fn get_credentials(&self) -> Pin<Box<dyn Future<Output = RedisResult<BasicAuth>> + Send>>;
-    
+
     /// Subscribe to credential updates
     ///
     /// Returns the initial credentials and a disposable subscription handle
     fn subscribe(&self, listener: Arc<dyn StreamingCredentialsListener>)
         //-> impl std::future::Future<Output = RedisResult<(BasicAuth, Box<dyn Disposable>)>> + Send;
         -> Box<dyn Disposable>;
-    
+
     // Clone the credentials provider - we might need this
     // clone was implemented now for the connection object along with display
     // there's a dyn box crate, which implements something like the clone box under the hood
     // Trait objects (dyn Trait) are not Clone by default
     /*
         let cloned = original.clone();
-        Will fail unless the trait StreamingCredentialsProvider itself is declared as Clone-compatible in a trait-object-friendly way. 
+        Will fail unless the trait StreamingCredentialsProvider itself is declared as Clone-compatible in a trait-object-friendly way.
         Which by default it isn't.
 
         This doesn't work:
@@ -145,10 +146,10 @@ pub trait StreamingCredentialsProvider: Send + Sync {
 pub trait SStreamingCredentialsProvider: Send + Sync {
 
   /// Get a fresh, independent stream of credentials.
-  fn subscribe(&self) -> impl Stream<Item = Arc<BasicAuth>> + Unpin + Send + 'static;
+  fn subscribe(&self) -> BoxStream<'static, BasicAuth>;
 
   /// Stop background work; subscribers will end as updates cease.
-  fn stop(&self);
+  fn stop(&mut self);
 }
 
 /// Handle for disposing of subscriptions

@@ -1,5 +1,5 @@
 use super::{AsyncPushSender, ConnectionLike, Runtime, SharedHandleContainer, TaskHandle};
-use crate::aio::setup_connection;
+use crate::aio::{runtime, setup_connection};
 #[cfg(feature = "cache-aio")]
 use crate::caching::{CacheManager, CacheStatistics, PrepareCacheResult};
 use crate::parser::ValueCodec;
@@ -22,7 +22,7 @@ use futures_util::{
 };
 use pin_project_lite::pin_project;
 use std::collections::VecDeque;
-use std::fmt;
+use std::{fmt, panic};
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -533,7 +533,10 @@ impl MultiplexedConnection {
 
         if let Some(ref cp) = connection_info.credentials_provider {
             // Get credentials from provider and set as password
-            let creds = cp.get_credentials().await?;
+            let Some(creds) = cp.subscribe().next().await else {
+                //return error?
+                panic!();
+            };
             connection_info.password = Some(creds.password);
         }
 
@@ -570,10 +573,22 @@ impl MultiplexedConnection {
 
         // Set up streaming credentials subscription if provider is available
         if let Some(streaming_provider) = connection_info.credentials_provider {
-            let _subscription = con.subscribe_to_credentials_updates(streaming_provider);
+            let mut con = con.clone();
+
+            let mut stream = streaming_provider.subscribe();
+
+            //Background reauthentication
+            let handle = Runtime::locate().spawn(async move {
+                while let Some(credentials) = stream.next().await {
+                    let Ok(_) = con.re_authenticate_with_credentials(&credentials).await else {
+                        panic!();
+                    };
+                }
+            });
+            // let _subscription = con.subscribe_to_credentials_updates(streaming_provider);
             // TODO: Store subscription for cleanup when connection is dropped
         }
-        
+
         Ok((con, driver))
     }
 
@@ -696,7 +711,7 @@ impl ConnectionLike for MultiplexedConnection {
 }
 
 impl MultiplexedConnection {
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     ///
     /// Updates from the sender will be sent on the push sender that was passed to the connection.
     /// If the connection was configured without a push sender, the connection won't be able to pass messages back to the user.
@@ -786,7 +801,7 @@ use crate::auth::{AsyncConnectionReAuthenticator};
 #[cfg(feature = "token-based-authentication")]
 impl MultiplexedConnection {
     /// Re-authenticate the connection with new credentials
-    pub fn subscribe_to_credentials_updates(&self, streaming_credentials_provider: Box<dyn StreamingCredentialsProvider>) 
+    pub fn subscribe_to_credentials_updates(&self, streaming_credentials_provider: Box<dyn StreamingCredentialsProvider>)
     -> Box<dyn crate::auth::Disposable> {
         streaming_credentials_provider
             .subscribe(Arc::new(AsyncConnectionReAuthenticator::new(self.clone())))
