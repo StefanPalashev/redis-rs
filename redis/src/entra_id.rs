@@ -29,6 +29,7 @@
 
 #[cfg(all(feature = "entra-id"))]
 use crate::auth::BasicAuth;
+use crate::auth::SStreamingCredentialsProvider;
 #[cfg(feature = "entra-id")]
 use crate::auth::{AsyncCredentialsProvider, AuthCredentials, CredentialsProvider};
 #[cfg(feature = "entra-id")]
@@ -41,9 +42,18 @@ use azure_identity::{
     ClientCertificateCredential, ClientSecretCredential, DefaultAzureCredential,
     ManagedIdentityCredential, TokenCredentialOptions, UserAssignedId,
 };
+#[cfg(feature = "entra-id")]
+use tokio::sync::mpsc::Sender;
+#[cfg(feature = "entra-id")]
+use tokio::task::JoinHandle;
 
+use std::sync::Arc;
+#[cfg(feature = "entra-id")]
+use std::sync::{Mutex, RwLock};
 #[cfg(feature = "entra-id")]
 use std::time::SystemTime;
+#[cfg(feature = "entra-id")]
+use futures_util::StreamExt;
 
 /// The default Redis scope for Azure Managed Redis
 #[cfg(feature = "entra-id")]
@@ -69,6 +79,9 @@ pub struct ClientCertificateConfig {
 pub struct EntraIdCredentialsProvider {
     credential: Box<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
+    background_handle: Option<JoinHandle<()>>,
+    subscribers: Arc<Mutex<Vec<Sender<BasicAuth>>>>,
+    current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
 
 #[cfg(feature = "entra-id")]
@@ -101,6 +114,9 @@ impl EntraIdCredentialsProvider {
                 ))
             })?),
             scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
         })
     }
 
@@ -137,6 +153,9 @@ impl EntraIdCredentialsProvider {
                 ))
             })?),
             scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
         })
     }
 
@@ -181,6 +200,9 @@ impl EntraIdCredentialsProvider {
                 ))
             })?),
             scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
         })
     }
 
@@ -205,6 +227,9 @@ impl EntraIdCredentialsProvider {
                 ))
             })?),
             scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
         })
     }
 
@@ -236,6 +261,9 @@ impl EntraIdCredentialsProvider {
                 ))
             })?),
             scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
         })
     }
 
@@ -245,7 +273,13 @@ impl EntraIdCredentialsProvider {
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
-        Ok(Self { credential, scopes })
+        Ok(Self {
+            credential,
+            scopes,
+            background_handle: Default::default(),
+            subscribers: Default::default(),
+            current_credentials: Default::default()
+        })
     }
 
     /// Validate that scopes are not empty and contain valid URLs
@@ -297,6 +331,41 @@ impl EntraIdCredentialsProvider {
             format!("{err}"),
         ))
     }
+
+    pub fn start(&mut self) {
+        let subscribers_arc = Arc::clone(&self.subscribers);
+        let current_credentials_arc = Arc::clone(&self.current_credentials);
+        self.background_handle = Some(tokio::spawn(async move {
+            loop {
+                let subscribers = subscribers_arc
+                    .lock()
+                    .expect("could not acquire lock for subscribers")
+                    .clone();
+
+                let credentials = BasicAuth {
+                    username: "foo".to_string(),
+                    password: "bar".to_string(),
+                };
+
+                *current_credentials_arc.write().expect("rwlock poisoned") =
+                    Some(credentials.clone());
+
+                futures_util::future::join_all(
+                    subscribers
+                        .iter()
+                        .map(|sender| sender.send(credentials.clone())),
+                )
+                .await;
+
+                subscribers_arc
+                    .lock()
+                    .expect("could not acquire lock for subscribers")
+                    .retain(|sender| !sender.is_closed());
+
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            }
+        }));
+    }
 }
 
 #[cfg(feature = "entra-id")]
@@ -342,6 +411,45 @@ impl CredentialsProvider for EntraIdCredentialsProvider {
     //     // Note 2: Maybe this should be removed in general from the CrendentialsProvider trait.
     //     panic!("EntraIdCredentialsProvider cannot be cloned due to Azure Identity limitations. Create separate instances instead.")
     // }
+}
+
+#[cfg(feature = "entra-id")]
+impl SStreamingCredentialsProvider for EntraIdCredentialsProvider {
+    fn subscribe(&self) -> futures_util::stream::BoxStream<'static, BasicAuth> {
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<BasicAuth>(1);
+
+        self.subscribers
+            .lock()
+            .expect("could not acquire guard for subscribers")
+            .push(tx);
+
+        let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+            match rx.recv().await {
+                Some(item) => Some((item, rx)),
+                None => None,
+            }
+        });
+
+        if let Some(creds) = self
+            .current_credentials
+            .read()
+            .expect("rwlock poisoned")
+            .clone()
+        {
+            futures_util::stream::once(async move { creds })
+                .chain(stream)
+                .boxed()
+        } else {
+            stream.boxed()
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(handle) = self.background_handle.take() {
+            handle.abort();
+        }
+    }
 }
 
 // #[cfg(all(feature = "entra-id", feature = "aio"))]

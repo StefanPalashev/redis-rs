@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::str::{from_utf8, FromStr};
 use std::time::{Duration, Instant};
 
+use crate::auth::SStreamingCredentialsProvider;
 use crate::cmd::{cmd, pipe, Cmd};
 use crate::io::tcp::{stream_with_settings, TcpSettings};
 use crate::parser::Parser;
@@ -251,10 +252,10 @@ pub struct RedisConnectionInfo {
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
     /// Optional credentials provider for dynamic authentication (e.g., token-based auth)
-    
-    // S_TODO: An enum with all of these might be needed, however there might be a need for clone, 
+
+    // S_TODO: An enum with all of these might be needed, however there might be a need for clone,
     // so maybe a common trait wrapper approach would fit better
-    pub credentials_provider: Option<Box<dyn StreamingCredentialsProvider>>,
+    pub credentials_provider: Option<Box<dyn SStreamingCredentialsProvider>>,
 }
 
 impl Clone for RedisConnectionInfo {
@@ -286,7 +287,7 @@ impl RedisConnectionInfo {
     #[cfg(feature = "token-based-authentication")]
     pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
     where
-        P: StreamingCredentialsProvider + 'static,
+        P: SStreamingCredentialsProvider + 'static,
     {
         self.credentials_provider = Some(Box::new(provider));
         self
@@ -2038,7 +2039,7 @@ impl<'a> PubSub<'a> {
         }
     }
 
-    /// Subscribes to a new channel(s).    
+    /// Subscribes to a new channel(s).
     pub fn subscribe<T: ToRedisArgs>(&mut self, channel: T) -> RedisResult<()> {
         self.cache_messages_until_received_response(cmd("SUBSCRIBE").arg(channel), true)?;
         Ok(())

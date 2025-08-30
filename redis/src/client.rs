@@ -2,6 +2,8 @@ use std::time::Duration;
 
 #[cfg(feature = "aio")]
 use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
+#[cfg(feature = "token-based-authentication")]
+use crate::auth::SStreamingCredentialsProvider;
 #[cfg(feature = "aio")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
 use crate::{
@@ -85,7 +87,7 @@ impl Client {
     #[cfg(feature = "token-based-authentication")]
     pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
     where
-        P: StreamingCredentialsProvider + 'static,
+        P: SStreamingCredentialsProvider + 'static,
     {
         self.connection_info.redis = self
             .connection_info
