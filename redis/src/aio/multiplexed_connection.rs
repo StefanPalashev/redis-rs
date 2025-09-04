@@ -8,10 +8,13 @@ use crate::{
     check_resp3, cmd, cmd::Cmd, AsyncConnectionConfig, ProtocolVersion, PushInfo,
     RedisConnectionInfo, ToRedisArgs,
 };
+#[cfg(feature = "token-based-authentication")]
+use crate::{SStreamingCredentialsProvider, StreamingCredentialsProvider};
 use ::tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
 };
+use core::panic;
 use futures_util::{
     future::{Future, FutureExt},
     ready,
@@ -437,6 +440,8 @@ pub struct MultiplexedConnection {
     _task_handle: Option<SharedHandleContainer>,
     #[cfg(feature = "cache-aio")]
     pub(crate) cache_manager: Option<CacheManager>,
+    /// Connection info for re-authentication purposes
+    connection_info: RedisConnectionInfo,
 }
 
 impl Debug for MultiplexedConnection {
@@ -524,9 +529,34 @@ impl MultiplexedConnection {
             })
             .transpose()?;
 
+        //
+        let mut connection_info = connection_info.clone();
+
+        if let Some(ref cp) = connection_info.credentials_provider {
+            // Get credentials from provider and set as password
+            match cp.subscribe().next().await {
+                Some(Ok(credentials)) => {
+                    println!("Received credentials: {:?}", credentials);
+                    connection_info.password = Some(credentials.password);
+                }
+                Some(Err(err)) => {
+                    eprintln!("Error while receiving credentials from stream: {err}");
+                    // S_TODO:: move to impl
+                    // Err(RedisError::from((
+                    //     ErrorKind::AuthenticationFailed,
+                    //     "Failed to get credentials from provider",
+                    // )));
+                    return Err(err);
+                }
+                None => {
+                    panic!("Credential stream closed unexpectedly");
+                }
+            }
+        }
+
         setup_connection(
             &mut codec,
-            connection_info,
+            &connection_info,
             #[cfg(feature = "cache-aio")]
             cache_config,
         )
@@ -552,7 +582,39 @@ impl MultiplexedConnection {
             _task_handle: None,
             #[cfg(feature = "cache-aio")]
             cache_manager: cache_manager_opt,
+            connection_info: connection_info.clone(),
         };
+
+        // Set up streaming credentials subscription if provider is available
+        if let Some(streaming_provider) = connection_info.credentials_provider {
+            let mut con = con.clone();
+
+            let mut stream = streaming_provider.subscribe();
+
+            // S_TODO: Store subscription for cleanup when connection is dropped
+            // EDIT: The handle might not be needed. When the provider's stop function get's called, it will shutdown the stream
+            let handle = Runtime::locate().spawn(async move {
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(credentials) => {
+                            if let Err(err) =
+                                con.re_authenticate_with_credentials(&credentials).await
+                            {
+                                eprintln!("Failed to re-authenticate async connection: {err}");
+                            } else {
+                                // S_TODO: remove after verifying
+                                println!("Re-authenticated async connection");
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("Credential stream error for async connection: {err}");
+                        }
+                    }
+                }
+                // S_TODO: remove after verifying
+                println!("Re-authentication stream ended");
+            });
+        }
 
         Ok((con, driver))
     }
@@ -756,6 +818,35 @@ impl MultiplexedConnection {
         let mut cmd = cmd("PUNSUBSCRIBE");
         cmd.arg(channel_pattern);
         cmd.exec_async(self).await?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "token-based-authentication")]
+use crate::auth::AsyncConnectionReAuthenticator;
+
+#[cfg(feature = "token-based-authentication")]
+impl MultiplexedConnection {
+    /// Re-authenticate the connection with new credentials
+    pub fn subscribe_to_credentials_updates(
+        &self,
+        streaming_credentials_provider: Box<dyn StreamingCredentialsProvider>,
+    ) -> Box<dyn crate::auth::Disposable> {
+        streaming_credentials_provider
+            .subscribe(Arc::new(AsyncConnectionReAuthenticator::new(self.clone())))
+    }
+
+    /// Re-authenticate the connection with new credentials
+    ///
+    /// This method allows existing async connections to update their authentication
+    /// when tokens are refreshed, enabling streaming credential updates.
+    pub async fn re_authenticate_with_credentials(
+        &mut self,
+        credentials: &crate::auth::BasicAuth,
+    ) -> RedisResult<()> {
+        let auth_cmd =
+            crate::connection::authenticate_cmd(&self.connection_info, true, &credentials.password);
+        self.send_packed_command(&auth_cmd).await?;
         Ok(())
     }
 }

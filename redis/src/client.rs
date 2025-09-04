@@ -4,10 +4,13 @@ use std::time::Duration;
 use crate::aio::{AsyncPushSender, DefaultAsyncDNSResolver};
 #[cfg(feature = "aio")]
 use crate::io::{tcp::TcpSettings, AsyncDNSResolver};
+#[cfg(feature = "token-based-authentication")]
+use crate::CredentialsProvider;
 use crate::{
     connection::{connect, Connection, ConnectionInfo, ConnectionLike, IntoConnectionInfo},
     types::{RedisResult, Value},
 };
+
 #[cfg(feature = "aio")]
 use std::pin::Pin;
 
@@ -76,6 +79,22 @@ impl Client {
     pub fn get_connection_info(&self) -> &ConnectionInfo {
         &self.connection_info
     }
+
+
+    /// Creates a new client with a credentials provider for authentication.
+    /// This is useful for token-based authentication like Azure Entra ID.
+    // S_TODO:
+    // #[cfg(feature = "token-based-authentication")]
+    // pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
+    // where
+    //     P: StreamingCredentialsProvider + 'static,
+    // {
+    //     self.connection_info.redis = self
+    //         .connection_info
+    //         .redis
+    //         .with_credentials_provider(provider);
+    //     self
+    // }
 
     /// Constructs a new `Client` with parameters necessary to create a TLS connection.
     ///
