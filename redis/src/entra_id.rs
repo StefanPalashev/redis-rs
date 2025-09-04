@@ -30,17 +30,18 @@
 //! ```
 
 use crate::auth::BasicAuth;
-use crate::auth::{SStreamingCredentialsProvider, AuthCredentials, CredentialsProvider};
+use crate::auth::{AuthCredentials, CredentialsProvider, SStreamingCredentialsProvider};
 use crate::types::{ErrorKind, RedisError, RedisResult};
-use azure_core::credentials::TokenCredential;
+use azure_core::credentials::{AccessToken, TokenCredential};
 use azure_identity::{
     ClientCertificateCredential, ClientSecretCredential, DefaultAzureCredential,
     ManagedIdentityCredential, TokenCredentialOptions, UserAssignedId,
 };
-use futures_util::Stream;
-use std::sync::{Arc, Mutex};
+use futures_util::{Stream, StreamExt};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::mpsc::Sender;
+
 
 use std::time::SystemTime;
 
@@ -63,11 +64,11 @@ pub struct ClientCertificateConfig {
 
 /// Entra ID credentials provider that uses Azure Identity for authentication
 pub struct EntraIdCredentialsProvider {
-    credential_provider: Box<dyn TokenCredential + Send + Sync>,
+    credential_provider: Arc<dyn TokenCredential + Send + Sync>,
     scopes: Vec<String>,
     background_handle: Option<tokio::task::JoinHandle<()>>,
     subscribers: Arc<Mutex<Vec<Arc<Sender<RedisResult<BasicAuth>>>>>>,
-    current_credentials: Arc<tokio::sync::RwLock<Option<BasicAuth>>>,
+    current_credentials: Arc<RwLock<Option<BasicAuth>>>,
 }
 
 impl std::fmt::Debug for EntraIdCredentialsProvider {
@@ -91,12 +92,14 @@ impl EntraIdCredentialsProvider {
         Self::validate_scopes(&scopes)?;
         let credential_provider = DefaultAzureCredential::new().map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Box::new(std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                RedisError::from((
-                    ErrorKind::AuthenticationFailed,
-                    "Failed to unwrap credential",
-                ))
-            })?),
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
             scopes,
             background_handle: None,
             subscribers: Default::default(),
@@ -130,12 +133,14 @@ impl EntraIdCredentialsProvider {
             ClientSecretCredential::new(&tenant_id, client_id, client_secret.into(), None)
                 .map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Box::new(std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                RedisError::from((
-                    ErrorKind::AuthenticationFailed,
-                    "Failed to unwrap credential",
-                ))
-            })?),
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
             scopes,
             background_handle: None,
             subscribers: Default::default(),
@@ -177,12 +182,14 @@ impl EntraIdCredentialsProvider {
         )
         .map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Box::new(std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                RedisError::from((
-                    ErrorKind::AuthenticationFailed,
-                    "Failed to unwrap credential",
-                ))
-            })?),
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
             scopes,
             background_handle: None,
             subscribers: Default::default(),
@@ -202,14 +209,17 @@ impl EntraIdCredentialsProvider {
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
-        let credential_provider = ManagedIdentityCredential::new(None).map_err(Self::convert_error)?;
+        let credential_provider =
+            ManagedIdentityCredential::new(None).map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Box::new(std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                RedisError::from((
-                    ErrorKind::AuthenticationFailed,
-                    "Failed to unwrap credential",
-                ))
-            })?),
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
             scopes,
             background_handle: None,
             subscribers: Default::default(),
@@ -238,12 +248,14 @@ impl EntraIdCredentialsProvider {
         let credential_provider =
             ManagedIdentityCredential::new(Some(options)).map_err(Self::convert_error)?;
         Ok(Self {
-            credential_provider: Box::new(std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
-                RedisError::from((
-                    ErrorKind::AuthenticationFailed,
-                    "Failed to unwrap credential",
-                ))
-            })?),
+            credential_provider: Arc::new(
+                std::sync::Arc::try_unwrap(credential_provider).map_err(|_| {
+                    RedisError::from((
+                        ErrorKind::AuthenticationFailed,
+                        "Failed to unwrap credential",
+                    ))
+                })?,
+            ),
             scopes,
             background_handle: None,
             subscribers: Default::default(),
@@ -253,7 +265,7 @@ impl EntraIdCredentialsProvider {
 
     /// Create a new provider with a custom credential implementation
     pub fn new_with_credential(
-        credential_provider: Box<dyn TokenCredential + Send + Sync>,
+        credential_provider: Arc<dyn TokenCredential + Send + Sync>,
         scopes: Vec<String>,
     ) -> RedisResult<Self> {
         Self::validate_scopes(&scopes)?;
@@ -307,6 +319,13 @@ impl EntraIdCredentialsProvider {
         Ok(())
     }
 
+    fn convert_credentials(access_token: AccessToken) -> BasicAuth {
+        BasicAuth {
+            username: "Bearer".to_string(),
+            password: access_token.token.secret().to_string(),
+        }
+    }
+
     /// Convert Azure Core error to Redis error
     fn convert_error(err: azure_core::Error) -> RedisError {
         RedisError::from((
@@ -316,47 +335,48 @@ impl EntraIdCredentialsProvider {
         ))
     }
 
+    fn convert_error_ref(err: &azure_core::Error) -> RedisError {
+        RedisError::from((
+            ErrorKind::AuthenticationFailed,
+            "Entra ID authentication failed",
+            format!("{err}"),
+        ))
+    }
 
     pub async fn start(&mut self) {
         // Prevent multiple calls to start
-        if (self.background_handle).is_some() {
+        if self.background_handle.is_some() {
             return;
         }
 
         let subscribers_arc = Arc::clone(&self.subscribers);
         let current_credentials_arc = Arc::clone(&self.current_credentials);
-        let scopes_arc = Arc::new(&self.scopes);
+        let credential_provider_arc = Arc::clone(&self.credential_provider);
+
+        let scopes = self.scopes.clone();
 
         self.background_handle = Some(tokio::spawn(async move {
-            let scopes: Vec<&str> = scopes_arc.iter().map(|s| s.as_str()).collect();
+            let scopes: Vec<&str> = scopes.iter().map(|s| s.as_str()).collect();
             loop {
-                let token_response = self
-                .credential_provider
-                .get_token(&scopes, None)
-                .await
-                .map(|access_token| BasicAuth {
-                    username: "Bearer".to_string(),
-                    password: access_token.token.secret().to_string(),
-                })
-                .map_err(Self::convert_error);
+                let token_response = credential_provider_arc.get_token(&scopes, None).await;
 
-                let token_response = Arc::new(token_response);
-
-                if let Ok(credentials) = *token_response {
-                    *current_credentials_arc
-                        .write()
-                        .await = Some(credentials.clone());
+                if let Ok(ref access_token) = token_response {
+                    *current_credentials_arc.write().expect("rwlock poisoned") = Some(Self::convert_credentials(access_token.clone()));
                 }
 
                 let subscribers = subscribers_arc
                     .lock()
                     .expect("could not acquire lock for subscribers")
-                 //   .clone();
-                ;
-                futures_util::future::join_all(
-                    subscribers
-                        .iter()
-                        .map(|sender| sender.send(Arc::clone(&token_response))))
+                    .clone();
+
+                futures_util::future::join_all(subscribers.iter().map(|sender| {
+                    let token_response = token_response.as_ref();
+                    let response = match token_response {
+                        Ok(access_token) => Ok(Self::convert_credentials(access_token.clone())),
+                        Err(error) => Err(Self::convert_error_ref(error)),
+                    };
+                    sender.send(response)
+                }))
                 .await;
 
                 subscribers_arc
@@ -377,7 +397,7 @@ impl EntraIdCredentialsProvider {
 }
 
 impl SStreamingCredentialsProvider for EntraIdCredentialsProvider {
-    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>>{
+    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = RedisResult<BasicAuth>> + Send + 'static>> {
         let (tx, rx) = tokio::sync::mpsc::channel::<RedisResult<BasicAuth>>(1);
 
         self.subscribers
@@ -398,17 +418,14 @@ impl SStreamingCredentialsProvider for EntraIdCredentialsProvider {
             .expect("rwlock poisoned")
             .clone()
         {
-            futures_util::stream::once(async move { creds })
+            futures_util::stream::once(async move { Ok(creds) })
                 .chain(stream)
                 .boxed()
         } else {
             stream.boxed()
         }
     }
-
-    
 }
-
 
 impl CredentialsProvider for EntraIdCredentialsProvider {
     fn get_credentials(&self) -> RedisResult<BasicAuth> {
@@ -427,7 +444,7 @@ impl CredentialsProvider for EntraIdCredentialsProvider {
         rt.block_on(async {
             let scopes: Vec<&str> = self.scopes.iter().map(|s| s.as_str()).collect();
             let token_response = self
-                .credential
+                .credential_provider
                 .get_token(&scopes, None)
                 .await
                 .map_err(Self::convert_error)?;
