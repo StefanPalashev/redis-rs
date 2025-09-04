@@ -1,7 +1,7 @@
-use std::time::{Duration, SystemTime};
-use std::sync::{Arc, Mutex};
 use crate::auth::{AuthCredentials, BasicAuth, CredentialsProvider};
 use crate::types::RedisResult;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 /// Configuration for token refresh behavior
 #[derive(Debug, Clone)]
@@ -102,8 +102,6 @@ impl Default for TokenRefreshServiceConfig {
         }
     }
 }
-
-
 
 /// Common logic shared between sync and async token managers
 mod token_manager_common {

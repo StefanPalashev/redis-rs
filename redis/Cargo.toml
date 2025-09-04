@@ -115,8 +115,8 @@ hashbrown = { version = "0.16", optional = true }
 lru = { version = "0.16", optional = true }
 
 # Only needed for Entra ID authentication
-azure_identity = { version = "0.25", optional = true, features = ["client_certificate"] }
-azure_core = { version = "0.25", optional = true }
+azure_identity = { version = "0.27", optional = true, features = ["client_certificate"] }
+azure_core = { version = "0.27", optional = true }
 time = { version = "0.3", optional = true }
 
 [features]
@@ -163,7 +163,7 @@ r2d2 = ["dep:r2d2"]
 bb8 = ["dep:bb8"]
 safe_iterators = []
 token-based-authentication = ["aio"]
-entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "token-based-authentication"]
+entra-id = ["dep:azure_identity", "dep:azure_core", "dep:time", "token-based-authentication", "tokio-comp"]
 
 # Deprecated features
 tls = ["tls-native-tls"] # use "tls-native-tls" instead

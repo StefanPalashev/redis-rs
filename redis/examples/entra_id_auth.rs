@@ -5,9 +5,7 @@
 //! and managed identities.
 
 #[cfg(feature = "entra-id")]
-use redis::{
-    Client, EntraIdCredentialsProvider, RedisResult,
-};
+use redis::{Client, EntraIdCredentialsProvider, RedisResult};
 
 #[cfg(feature = "entra-id")]
 #[tokio::main]

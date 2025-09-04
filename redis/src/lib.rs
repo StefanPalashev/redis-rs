@@ -598,13 +598,13 @@ let primary = sentinel.get_async_connection().await.unwrap();
 // public api
 #[cfg(feature = "token-based-authentication")]
 pub use crate::auth::{
-    AuthCredentials, BasicAuth, CredentialsProvider, StaticCredentialsProvider,
-    AsyncCredentialsProvider, StreamingCredentialsListener,
-    StreamingCredentialsProvider, AsyncConnectionReAuthenticator,
+    AsyncConnectionReAuthenticator, AsyncCredentialsProvider, AuthCredentials, BasicAuth,
+    CredentialsProvider, SStreamingCredentialsProvider, StaticCredentialsProvider,
+    StreamingCredentialsListener, StreamingCredentialsProvider,
 };
 #[cfg(feature = "token-based-authentication")]
 pub use crate::auth_management::{
-    TokenRefreshConfig, TokenRefreshServiceConfig, RetryConfig, TokenManager,
+    RetryConfig, TokenManager, TokenRefreshConfig, TokenRefreshServiceConfig,
 };
 #[cfg(feature = "aio")]
 pub use crate::client::AsyncConnectionConfig;

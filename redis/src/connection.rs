@@ -18,7 +18,7 @@ use crate::types::{
 };
 use crate::{check_resp3, from_owned_redis_value, ProtocolVersion};
 #[cfg(feature = "token-based-authentication")]
-use crate::{StreamingCredentialsProvider};
+use crate::{SStreamingCredentialsProvider, StreamingCredentialsProvider};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -29,7 +29,7 @@ use native_tls::{TlsConnector, TlsStream};
 
 #[cfg(feature = "tls-rustls")]
 use rustls::{RootCertStore, StreamOwned};
-#[cfg(feature = "tls-rustls")]
+#[cfg(any(feature = "tls-rustls", feature = "token-based-authentication"))]
 use std::sync::Arc;
 
 use crate::PushInfo;
@@ -251,10 +251,9 @@ pub struct RedisConnectionInfo {
     /// Version of the protocol to use.
     pub protocol: ProtocolVersion,
     /// Optional credentials provider for dynamic authentication (e.g., token-based auth)
-    
-    // S_TODO: An enum with all of these might be needed, however there might be a need for clone, 
+    // S_TODO: An enum with all of these might be needed, however there might be a need for clone,
     // so maybe a common trait wrapper approach would fit better
-    pub credentials_provider: Option<Box<dyn StreamingCredentialsProvider>>,
+    pub credentials_provider: Option<Arc<dyn SStreamingCredentialsProvider>>,
 }
 
 impl Clone for RedisConnectionInfo {
@@ -276,7 +275,10 @@ impl std::fmt::Debug for RedisConnectionInfo {
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("protocol", &self.protocol)
-            .field("credentials_provider", &self.credentials_provider.as_ref().map(|_| "<provider>"))
+            .field(
+                "credentials_provider",
+                &self.credentials_provider.as_ref().map(|_| "<provider>"),
+            )
             .finish()
     }
 }
@@ -286,9 +288,9 @@ impl RedisConnectionInfo {
     #[cfg(feature = "token-based-authentication")]
     pub fn with_credentials_provider<P>(mut self, provider: P) -> Self
     where
-        P: StreamingCredentialsProvider + 'static,
+        P: SStreamingCredentialsProvider + 'static,
     {
-        self.credentials_provider = Some(Box::new(provider));
+        self.credentials_provider = Some(Arc::new(provider));
         self
     }
 
@@ -1836,7 +1838,10 @@ impl Connection {
     ///
     /// This method allows existing connections to update their authentication
     /// when tokens are refreshed, enabling streaming credential updates.
-    pub fn re_authenticate_with_credentials(&mut self, credentials: &crate::auth::BasicAuth) -> RedisResult<()> {
+    pub fn re_authenticate_with_credentials(
+        &mut self,
+        credentials: &crate::auth::BasicAuth,
+    ) -> RedisResult<()> {
         let auth_cmd = authenticate_cmd(&self.connection_info, true, &credentials.password);
         self.req_command(&auth_cmd)?;
         Ok(())
