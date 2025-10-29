@@ -367,6 +367,8 @@ pub struct StreamReadOptions {
     /// Set the `GROUP <groupname> <consumername>` cmd arg.
     /// This option will toggle the cmd from XREAD to XREADGROUP.
     group: SRGroup,
+    /// Set the `CLAIM <min-idle-time>` cmd arg.
+    claim: Option<usize>,
 }
 
 impl StreamReadOptions {
@@ -408,6 +410,12 @@ impl StreamReadOptions {
         ));
         self
     }
+
+    /// Set the minimum idle time for the CLAIM parameter.
+    pub fn claim(mut self, min_idle_time: usize) -> Self {
+        self.claim = Some(min_idle_time);
+        self
+    }
 }
 
 impl ToRedisArgs for StreamReadOptions {
@@ -439,6 +447,11 @@ impl ToRedisArgs for StreamReadOptions {
             // noack is only available w/ xreadgroup
             if self.noack == Some(true) {
                 out.write_arg(b"NOACK");
+            }
+            // claim is only available w/ xreadgroup
+            if let Some(ref min_idle_time) = self.claim {
+                out.write_arg(b"CLAIM");
+                out.write_arg(format!("{min_idle_time}").as_bytes());
             }
         }
     }
@@ -683,6 +696,10 @@ pub struct StreamId {
     pub id: String,
     /// All fields in this message, associated with their respective values.
     pub map: HashMap<String, Value>,
+    /// The number of milliseconds that elapsed since the last time this entry was delivered to a consumer.
+    pub milliseconds_elapsed_from_delivery: Option<usize>,
+    /// The number of times this entry was delivered.
+    pub delivered_count: Option<usize>,
 }
 
 impl StreamId {
@@ -784,7 +801,7 @@ impl FromRedisValue for StreamAutoClaimReply {
 
                 let claimed: Vec<_> = rows
                     .into_iter()
-                    .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+                    .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map, milliseconds_elapsed_from_delivery: None, delivered_count: None }))
                     .collect();
                 // This means that some nil entries were filtered
                 let invalid_entries = claimed.len() < claimed_count;
@@ -812,7 +829,7 @@ impl FromRedisValue for StreamReadReply {
                 row.into_iter().map(|(key, entry)| {
                     let ids = entry
                         .into_iter()
-                        .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map }))
+                        .flat_map(|id_row| id_row.into_iter().map(|(id, map)| StreamId { id, map, milliseconds_elapsed_from_delivery: None, delivered_count: None }))
                         .collect();
                     StreamKey { key, ids }
                 })
@@ -827,7 +844,7 @@ impl FromRedisValue for StreamRangeReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map, milliseconds_elapsed_from_delivery: None, delivered_count: None }))
             .collect();
         Ok(StreamRangeReply { ids })
     }
@@ -838,7 +855,7 @@ impl FromRedisValue for StreamClaimReply {
         let rows: Vec<HashMap<String, HashMap<String, Value>>> = from_redis_value(v)?;
         let ids: Vec<StreamId> = rows
             .into_iter()
-            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map }))
+            .flat_map(|row| row.into_iter().map(|(id, map)| StreamId { id, map, milliseconds_elapsed_from_delivery: None, delivered_count: None }))
             .collect();
         Ok(StreamClaimReply { ids })
     }

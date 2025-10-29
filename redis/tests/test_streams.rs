@@ -2049,6 +2049,8 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             StreamId {
                 id: claim.id.clone(),
                 map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
             },
         );
         claimed_entries.insert(
@@ -2056,6 +2058,8 @@ fn test_xautoclaim_invalid_pel_entries_claiming_just_ids() {
             StreamId {
                 id: claim_1.id.clone(),
                 map: Default::default(),
+                milliseconds_elapsed_from_delivery: None,
+                delivered_count: None,
             },
         );
         assert_eq!(reply.claimed, claimed_entries);
