@@ -27,6 +27,7 @@ enum ServerType {
 #[non_exhaustive]
 pub enum Module {
     Json,
+    Search,
 }
 
 pub struct RedisServer {
@@ -164,6 +165,13 @@ impl RedisServer {
                         .arg("--loadmodule")
                         .arg(env::var("REDIS_RS_REDIS_JSON_PATH").expect(
                         "Unable to find path to RedisJSON at REDIS_RS_REDIS_JSON_PATH, is it set?",
+                    ));
+                }
+                Module::Search => {
+                    redis_cmd
+                        .arg("--loadmodule")
+                        .arg(env::var("REDIS_RS_REDIS_SEARCH_PATH").expect(
+                        "Unable to find path to RediSearch at REDIS_RS_REDIS_SEARCH_PATH, is it set?",
                     ));
                 }
             };
