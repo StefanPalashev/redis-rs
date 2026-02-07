@@ -120,7 +120,10 @@ pub(crate) mod credentials_management_utils {
     }
 
     /// Calculate next delay with exponential backoff
-    #[cfg(all(feature = "token-based-authentication", feature = "entra-id"))]
+    #[cfg(all(
+        feature = "token-based-authentication",
+        any(feature = "entra-id", feature = "aws-iam")
+    ))]
     pub(crate) fn calculate_next_delay(
         current_delay: Duration,
         backoff_multiplier: f64,
