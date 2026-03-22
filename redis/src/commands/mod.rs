@@ -4,7 +4,7 @@ use crate::cmd::{Cmd, Iter, cmd};
 use crate::connection::{Connection, ConnectionLike, Msg, RedisConnectionInfo};
 use crate::pipeline::Pipeline;
 #[cfg(feature = "search")]
-use crate::search::{CreateOptions, NonEmpty, RediSearchSchema};
+use crate::search::{CreateOptions, NonEmpty, SearchOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IntegerReplyOrNoOp,
     NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs, ToSingleRedisArg,
@@ -2881,11 +2881,49 @@ implement_commands! {
     fn ft_create<K: ToSingleRedisArg>(
         index_name: K,
         options: &'a CreateOptions,
-        schema: &'a RediSearchSchema<NonEmpty>
+        schema: &'a SearchSchema<NonEmpty>
     ) -> (String) {
         cmd("FT.CREATE").arg(index_name).arg(options).arg("SCHEMA").arg(schema).take()
     }
 
+    /// Search an index with a textual query.
+    ///
+    /// ```text
+    /// FT.SEARCH index query
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/ft.search)
+    #[cfg(feature = "search")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+    fn ft_search<K: ToRedisArgs, Q: ToRedisArgs>(
+        index_name: K,
+        query: Q
+    ) -> Generic {
+        cmd("FT.SEARCH").arg(index_name).arg(query).take()
+    }
+
+    /// Search an index with a textual query and options.
+    ///
+    /// ```text
+    /// FT.SEARCH index query [NOCONTENT] [VERBATIM] [NOSTOPWORDS]
+    /// [WITHSCORES] [WITHPAYLOADS] [WITHSORTKEYS] [FILTER numeric_field min max ...]
+    /// [GEOFILTER geo_field lon lat radius m|km|mi|ft ...]
+    /// [INKEYS count key ...] [INFIELDS count field ...]
+    /// [RETURN count identifier [AS property] ...]
+    /// [SUMMARIZE ...] [HIGHLIGHT ...] [SLOP slop] [TIMEOUT timeout]
+    /// [INORDER] [LANGUAGE language] [EXPANDER expander] [SCORER scorer]
+    /// [EXPLAINSCORE] [PAYLOAD payload] [SORTBY sortby [ASC|DESC]]
+    /// [LIMIT offset num] [PARAMS nargs name value ...] [DIALECT dialect]
+    /// ```
+    /// [Redis Docs](https://redis.io/commands/ft.search)
+    #[cfg(feature = "search")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+    fn ft_search_options<K: ToRedisArgs, Q: ToRedisArgs>(
+        index_name: K,
+        query: Q,
+        options: &'a SearchOptions
+    ) -> Generic {
+        cmd("FT.SEARCH").arg(index_name).arg(query).arg(options).take()
+    }
     // script commands
 
     /// Load a script.

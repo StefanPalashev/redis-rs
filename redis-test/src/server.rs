@@ -191,7 +191,7 @@ impl RedisServer {
                     redis_cmd
                         .arg("--loadmodule")
                         .arg(env::var("REDIS_RS_REDIS_SEARCH_PATH").expect(
-                        "Unable to find path to RediSearch at REDIS_RS_REDIS_SEARCH_PATH, is it set?",
+                        "Unable to find path to Redis Search at REDIS_RS_REDIS_SEARCH_PATH, is it set?",
                     ));
                 }
             };

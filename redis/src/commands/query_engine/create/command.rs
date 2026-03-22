@@ -53,7 +53,7 @@ pub struct WithSchema;
 pub struct FtCreateCommand<State = WithoutSchema> {
     index: String,
     options: CreateOptions,
-    schema: Option<RediSearchSchema<NonEmpty>>,
+    schema: Option<SearchSchema<NonEmpty>>,
     _state: PhantomData<State>,
 }
 
@@ -81,7 +81,7 @@ impl FtCreateCommand<WithoutSchema> {
     ///
     /// This transitions the builder from `WithoutSchema` to `WithSchema` state,
     /// making `into_cmd()` available.
-    pub fn schema(self, schema: RediSearchSchema<NonEmpty>) -> FtCreateCommand<WithSchema> {
+    pub fn schema(self, schema: SearchSchema<NonEmpty>) -> FtCreateCommand<WithSchema> {
         FtCreateCommand {
             index: self.index,
             options: self.options,
