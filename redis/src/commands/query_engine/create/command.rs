@@ -45,7 +45,7 @@ pub struct WithSchema;
 /// ```rust
 /// use redis::{schema, search::*};
 ///
-/// let cmd = FtCreateCommand::new("my_index")
+/// let cmd = FtCreateCommand::new("index")
 ///     .options(CreateOptions::new().on(IndexDataType::Hash))
 ///     .schema(schema! { "title" => SchemaTextField::new() })
 ///     .into_cmd();

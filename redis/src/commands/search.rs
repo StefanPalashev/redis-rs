@@ -11,7 +11,11 @@ pub mod search_types;
 #[path = "query_engine/search/command.rs"]
 pub mod search;
 
+#[path = "query_engine/dropindex/command.rs"]
+pub mod drop;
+
 pub use create::FtCreateCommand;
 pub use create_types::*;
+pub use drop::FtDropIndexCommand;
 pub use search::FtSearchCommand;
 pub use search_types::*;

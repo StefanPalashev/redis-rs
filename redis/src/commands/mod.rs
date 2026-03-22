@@ -2924,6 +2924,59 @@ implement_commands! {
     ) -> Generic {
         cmd("FT.SEARCH").arg(index_name).arg(query).arg(options).take()
     }
+
+    /// Delete an index.
+    ///
+    /// ```text
+    /// FT.DROPINDEX index
+    /// ```
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::Commands;
+    ///
+    /// # fn example() -> redis::RedisResult<String> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_connection()?;
+    /// let result: String = con.ft_dropindex("products")?;
+    /// # Ok(result)
+    /// # }
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/ft.dropindex)
+    #[cfg(feature = "search")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+    fn ft_dropindex<K: ToSingleRedisArg>(index_name: K) -> (String) {
+        cmd("FT.DROPINDEX").arg(index_name).take()
+    }
+
+    /// Delete an index and all associated documents.
+    ///
+    /// ```text
+    /// FT.DROPINDEX index DD
+    /// ```
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use redis::Commands;
+    ///
+    /// # fn example() -> redis::RedisResult<String> {
+    /// # let client = redis::Client::open("redis://127.0.0.1/")?;
+    /// # let mut con = client.get_connection()?;
+    /// let result: String = con.ft_dropindex_dd("products")?;
+    /// # Ok(result)
+    /// # }
+    /// ```
+    ///
+    /// [Redis Docs](https://redis.io/commands/ft.dropindex)
+    #[cfg(feature = "search")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "search")))]
+    fn ft_dropindex_dd<K: ToSingleRedisArg>(index_name: K) -> (String) {
+        cmd("FT.DROPINDEX").arg(index_name).arg("DD").take()
+    }
+
     // script commands
 
     /// Load a script.

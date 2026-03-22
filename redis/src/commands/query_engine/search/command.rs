@@ -33,7 +33,7 @@ use crate::search::*;
 /// ```rust
 /// use redis::search::*;
 ///
-/// let cmd = FtSearchCommand::new("my_index", "*")
+/// let cmd = FtSearchCommand::new("index", "*")
 ///     .options(
 ///         SearchOptions::new()
 ///             .withscores()

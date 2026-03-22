@@ -235,6 +235,11 @@ name = "test_ft_search"
 path = "tests/query_engine/test_ft_search.rs"
 required-features = ["search"]
 
+[[test]]
+name = "test_ft_dropindex"
+path = "tests/query_engine/test_ft_dropindex.rs"
+required-features = ["search"]
+
 [[bench]]
 name = "bench_basic"
 harness = false
