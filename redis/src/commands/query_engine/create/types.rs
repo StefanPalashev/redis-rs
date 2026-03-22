@@ -74,9 +74,9 @@ macro_rules! search_languages {
 }
 
 search_languages!(
-    Arabic, Basque, Catalan, Danish, Dutch, English, Finnish, French, German, Greek, Hungarian,
-    Indonesian, Irish, Italian, Lithuanian, Nepali, Norwegian, Portuguese, Romanian, Russian,
-    Spanish, Swedish, Tamil, Turkish, Chinese,
+    Arabic, Armenian, Basque, Catalan, Danish, Dutch, English, Finnish, French, German, Greek,
+    Hindi, Hungarian, Indonesian, Irish, Italian, Lithuanian, Nepali, Norwegian, Portuguese,
+    Romanian, Russian, Serbian, Spanish, Swedish, Tamil, Turkish, Yiddish, Chinese,
 );
 
 impl ToRedisArgs for SearchLanguage {
