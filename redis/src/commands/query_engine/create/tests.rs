@@ -15,7 +15,7 @@ Builder
 │
     │ inserted by schema! macro or chained insert()
     ▼
-RediSearchSchema<Empty> ──insert()──> RediSearchSchema<NonEmpty>
+SearchSchema<Empty> ──insert()──> SearchSchema<NonEmpty>
       │
       │ Each FieldDefinition implements ToRedisArgs
       ▼
@@ -34,9 +34,8 @@ mod create_tests {
     use crate::create::*;
     use crate::schema;
     use crate::search::{
-        CompressionType, DistanceMetric, MAX_TRAINING_THRESHOLD, RediSearchSchema,
-        SchemaNumericField, SchemaTagField, SchemaTextField, VamanaVectorType, VectorField,
-        VectorType,
+        CompressionType, DistanceMetric, MAX_TRAINING_THRESHOLD, SchemaNumericField,
+        SchemaTagField, SchemaTextField, SearchSchema, VamanaVectorType, VectorField, VectorType,
     };
 
     static INDEX_NAME: &str = "index";
@@ -1015,7 +1014,7 @@ mod create_tests {
 
     #[test]
     fn test_multiple_fields() {
-        let schema = RediSearchSchema::new()
+        let schema = SearchSchema::new()
             .insert(TEXT_FIELD_NAME, SchemaTextField::new().weight(2.0))
             .insert(NUMERIC_FIELD_NAME, SchemaNumericField::new())
             .insert(TAG_FIELD_NAME, SchemaTagField::new().separator(','));

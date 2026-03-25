@@ -1,6 +1,6 @@
 //! Defines the types used with the FT.CREATE command.
 //!
-//! This module offers a type-safe mechanisms for constructing RediSearch schemas
+//! This module offers a type-safe mechanisms for constructing Redis Search schemas
 //! and configuring the options passed to the command.
 //!
 //! # Examples
@@ -22,7 +22,7 @@
 //! ```rust
 //! use redis::search::*;
 //!
-//! let schema = RediSearchSchema::new()
+//! let schema = SearchSchema::new()
 //!     .insert("title", SchemaTextField::new().weight(2.0))
 //!     .insert("price", SchemaNumericField::new())
 //!     .insert("condition", SchemaTagField::new().separator(','));
@@ -129,7 +129,7 @@ impl CreateOptions {
         self
     }
 
-    /// A filter expression with the full RediSearch aggregation expression language.
+    /// A filter expression with the full Redis Search aggregation expression language.
     /// It is possible to use @__key to access the key that was just added/changed.
     pub fn filter<S: Into<String>>(mut self, filter: S) -> Self {
         self.filter = Some(filter.into());
@@ -163,9 +163,9 @@ impl CreateOptions {
         self
     }
 
-    /// Force RediSearch to encode indices as if there were more than 32 text attributes.
+    /// Force Redis Search to encode indices as if there were more than 32 text attributes.
     /// This allows additional attributes (beyond 32) to be added using FT.ALTER.
-    /// For efficiency, RediSearch encodes indices differently if they are created with less than 32 text attributes.
+    /// For efficiency, Redis Search encodes indices differently if they are created with less than 32 text attributes.
     pub fn max_text_fields(mut self) -> Self {
         self.max_text_fields = true;
         self
@@ -313,7 +313,7 @@ pub enum FieldType {
     Numeric,
     /// Allows radius range queries against the value (point) in this attribute.
     Geo,
-    /// Allows vector queries against the value in this attribute. This requires query dialect 2 or above (introduced in RediSearch v2.4).
+    /// Allows vector queries against the value in this attribute. This requires query dialect 2 or above (introduced in Redis Search v2.4).
     Vector,
     /// Allows polygon queries against the value in this attribute.
     GeoShape,
@@ -1171,7 +1171,7 @@ impl ToRedisArgs for VamanaVectorOptions {
 
 /// Vector field definition for semantic similarity search.
 ///
-/// Represents a vector field in a RediSearch index with one of three supported indexing algorithms.
+/// Represents a vector field in a Redis Search index with one of three supported indexing algorithms.
 /// Each algorithm offers different trade-offs between accuracy, performance, and memory usage.
 ///
 /// # Algorithms
@@ -1809,14 +1809,14 @@ pub struct Empty;
 /// Marker type indicating a non-empty schema (at least one field added).
 pub struct NonEmpty;
 
-/// The RediSearch schema declaring which fields to index.
+/// The Redis Search schema declaring which fields to index.
 ///
 /// Uses the typestate pattern to enforce at compile time that a schema
 /// has at least one field before it can be used with a command.
 ///
 /// # Type States
-/// - `RediSearchSchema<Empty>` - No fields added yet, cannot be used with commands
-/// - `RediSearchSchema<NonEmpty>` - At least one field added, can be used with commands
+/// - `SearchSchema<Empty>` - No fields added yet, cannot be used with commands
+/// - `SearchSchema<NonEmpty>` - At least one field added, can be used with commands
 ///
 /// # Example
 /// ```rust
@@ -1829,21 +1829,21 @@ pub struct NonEmpty;
 /// };
 ///
 /// // Using the builder pattern
-/// let schema = RediSearchSchema::new()
+/// let schema = SearchSchema::new()
 ///     .insert("title", SchemaTextField::new())
 ///     .insert("price", SchemaNumericField::new());
 /// ```
 #[must_use = "Schema has no effect unless passed to a command"]
 #[derive(Debug, Clone)]
-pub struct RediSearchSchema<State = Empty> {
+pub struct SearchSchema<State = Empty> {
     fields: Vec<(String, FieldDefinition)>,
     _state: PhantomData<State>,
 }
 
-impl RediSearchSchema<Empty> {
+impl SearchSchema<Empty> {
     /// Create a new empty schema.
     pub fn new() -> Self {
-        RediSearchSchema {
+        SearchSchema {
             fields: Vec::new(),
             _state: PhantomData,
         }
@@ -1856,22 +1856,22 @@ impl RediSearchSchema<Empty> {
         mut self,
         key: K,
         value: V,
-    ) -> RediSearchSchema<NonEmpty> {
+    ) -> SearchSchema<NonEmpty> {
         self.fields.push((key.into(), value.into()));
-        RediSearchSchema {
+        SearchSchema {
             fields: self.fields,
             _state: PhantomData,
         }
     }
 }
 
-impl Default for RediSearchSchema<Empty> {
+impl Default for SearchSchema<Empty> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RediSearchSchema<NonEmpty> {
+impl SearchSchema<NonEmpty> {
     /// Insert an additional field into the schema.
     pub fn insert<K: Into<String>, V: Into<FieldDefinition>>(mut self, key: K, value: V) -> Self {
         self.fields.push((key.into(), value.into()));
@@ -1879,7 +1879,7 @@ impl RediSearchSchema<NonEmpty> {
     }
 }
 
-impl ToRedisArgs for RediSearchSchema<NonEmpty> {
+impl ToRedisArgs for SearchSchema<NonEmpty> {
     fn write_redis_args<W>(&self, out: &mut W)
     where
         W: ?Sized + RedisWrite,
@@ -1891,7 +1891,7 @@ impl ToRedisArgs for RediSearchSchema<NonEmpty> {
     }
 }
 
-/// Creates a non-empty [`RediSearchSchema`].
+/// Creates a non-empty [`SearchSchema`].
 ///
 /// This macro offers a concise syntax for defining schemas and guarantees
 /// at compile time that at least one field is specified. Empty schemas are
@@ -1912,7 +1912,7 @@ impl ToRedisArgs for RediSearchSchema<NonEmpty> {
 macro_rules! schema {
     // Requires at least one field - empty invocation won't match
     ($first_key:expr => $first_value:expr $(, $key:expr => $value:expr)* $(,)?) => {{
-        $crate::search::RediSearchSchema::new()
+        $crate::search::SearchSchema::new()
             .insert($first_key, $first_value)
             $(
                 .insert($key, $value)

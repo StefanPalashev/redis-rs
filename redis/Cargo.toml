@@ -189,6 +189,7 @@ tempfile = "3.24.0"
 anyhow = "1"
 redis-test = { path = "../redis-test" }
 rstest = "0.26"
+serial_test = "3.2"
 rand = "0.9"
 rustls = { version = "0.23", features = ["ring"] }
 test-macros = { path = "../test-macros" }
@@ -227,6 +228,16 @@ name = "test_digest_utils"
 [[test]]
 name = "test_ft_create"
 path = "tests/query_engine/test_ft_create.rs"
+required-features = ["search"]
+
+[[test]]
+name = "test_ft_search"
+path = "tests/query_engine/test_ft_search.rs"
+required-features = ["search"]
+
+[[test]]
+name = "test_ft_dropindex"
+path = "tests/query_engine/test_ft_dropindex.rs"
 required-features = ["search"]
 
 [[bench]]
