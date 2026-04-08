@@ -114,6 +114,7 @@ impl RedisServer {
             None,
             None,
             mtls_enabled,
+            None,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -132,6 +133,7 @@ impl RedisServer {
             None,
             None,
             mtls_enabled,
+            None,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -147,6 +149,7 @@ impl RedisServer {
         config_file: Option<&Path>,
         tls_paths: Option<TlsFilePaths>,
         mtls_enabled: bool,
+        cert_auth_field: Option<&str>,
         modules: &[Module],
         spawner: F,
     ) -> RedisServer {
@@ -238,6 +241,13 @@ impl RedisServer {
                     .arg(auth_client)
                     .arg("--bind")
                     .arg(host);
+
+                // Enable certificate-based authentication (Redis 8.6+)
+                // The cert_auth_field specifies which certificate field to use for username mapping
+                // (e.g., "CN" for Common Name)
+                if let Some(field) = cert_auth_field {
+                    redis_cmd.arg("--tls-auth-clients-user").arg(field);
+                }
 
                 // Insecure only disabled if `mtls` is enabled
                 let insecure = !mtls_enabled;

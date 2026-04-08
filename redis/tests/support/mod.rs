@@ -2,7 +2,10 @@
 
 #[cfg(feature = "aio")]
 use futures::Future;
-use redis::{Commands, ConnectionAddr, InfoDict, Pipeline, ProtocolVersion, RedisResult, Value};
+use redis::{
+    Commands, ConnectionAddr, ErrorKind, InfoDict, Pipeline, ProtocolVersion, RedisResult,
+    ServerErrorKind, Value,
+};
 #[cfg(feature = "aio")]
 use redis::{aio, cmd};
 use redis_test::server::{Module, RedisServer, use_protocol};
@@ -156,6 +159,37 @@ impl TestContext {
         Self::with_modules_and_tls(&[], true, None)
     }
 
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_cert_auth(tls_files: TlsFilePaths) -> TestContext {
+        Self::new_with_cert_auth_field(tls_files, "CN")
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    pub fn new_with_cert_auth_field(tls_files: TlsFilePaths, cert_field: &str) -> TestContext {
+        start_tls_crypto_provider();
+        let redis_port = get_random_available_port();
+        let addr = RedisServer::get_addr(redis_port);
+
+        // Convert the address to TcpTls if needed for cert-based authentication
+        let addr = match addr {
+            ConnectionAddr::Tcp(host, port) => ConnectionAddr::TcpTls {
+                host,
+                port,
+                insecure: true,
+                tls_params: None,
+            },
+            other => other, // Already TcpTls or Unix
+        };
+
+        Self::with_modules_addr_tls_and_cert_auth(
+            &[],
+            true,
+            addr,
+            Some(tls_files),
+            Some(cert_field),
+        )
+    }
+
     pub fn with_tls(tls_files: TlsFilePaths, mtls_enabled: bool) -> TestContext {
         Self::with_modules_and_tls(&[], mtls_enabled, Some(tls_files))
     }
@@ -185,11 +219,22 @@ impl TestContext {
         addr: ConnectionAddr,
         tls_files: Option<TlsFilePaths>,
     ) -> Self {
+        Self::with_modules_addr_tls_and_cert_auth(modules, mtls_enabled, addr, tls_files, None)
+    }
+
+    fn with_modules_addr_tls_and_cert_auth(
+        modules: &[Module],
+        mtls_enabled: bool,
+        addr: ConnectionAddr,
+        tls_files: Option<TlsFilePaths>,
+        cert_auth_field: Option<&str>,
+    ) -> Self {
         let server = RedisServer::new_with_addr_tls_modules_and_spawner(
             addr,
             None,
             tls_files,
             mtls_enabled,
+            cert_auth_field,
             modules,
             |cmd| {
                 cmd.spawn()
@@ -229,7 +274,34 @@ impl TestContext {
                 }
             }
         }
-        con.flushdb::<()>().unwrap();
+
+        // Redis may still be loading its dataset after accepting connections,
+        // especially with TLS where the handshake completes before Redis is fully ready.
+        // Retry flushdb if the BusyLoading error is returned to allow time for initialization.
+        let mut flush_retries = 0;
+        loop {
+            match con.flushdb::<()>() {
+                Ok(_) => break,
+                Err(err)
+                    if matches!(err.kind(), ErrorKind::Server(ServerErrorKind::BusyLoading)) =>
+                {
+                    sleep(millisecond);
+                    flush_retries += 1;
+                    if flush_retries > 10000 {
+                        panic!(
+                            "Redis is still loading after too many retries, last error: {err}, logfile: {:?}",
+                            server.log_file_contents()
+                        );
+                    }
+                }
+                Err(err) => {
+                    panic!(
+                        "Failed to flush database: {err}, logfile: {:?}",
+                        server.log_file_contents()
+                    );
+                }
+            }
+        }
 
         TestContext {
             server,
@@ -414,6 +486,7 @@ pub const REDIS_VERSION_CE_7_2: Version = (7, 2, 0);
 pub const REDIS_VERSION_CE_8_0: Version = (8, 0, 0);
 pub const REDIS_VERSION_CE_8_2: Version = (8, 1, 240);
 pub const REDIS_VERSION_CE_8_4: Version = (8, 3, 224);
+pub const REDIS_VERSION_CE_8_6: Version = (8, 6, 0);
 
 /// Macro to run tests only if the Redis version meets the minimum requirement.
 /// If the version is insufficient, the test is skipped with a message.
@@ -433,6 +506,30 @@ macro_rules! run_test_if_version_supported {
     }};
 }
 
+/// Macro to skip tests on an existing context if the Redis version doesn't meet requirements.
+/// Works with any context that has a `get_version()` method.
+///
+/// # Example
+/// ```
+/// let ctx = create_my_test_context();
+/// skip_if_not_version_supported!(&ctx, &REDIS_VERSION_CE_8_6);
+/// // Test continues only if version >= 8.6
+/// ```
+#[macro_export]
+macro_rules! skip_if_not_version_supported {
+    ($ctx:expr, $minimum_required_version:expr) => {{
+        let redis_version = $ctx.get_version();
+
+        if redis_version < *$minimum_required_version {
+            eprintln!(
+                "Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+                redis_version, $minimum_required_version
+            );
+            return;
+        }
+    }};
+}
+
 #[cfg(feature = "tls-rustls")]
 fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
     let ca_file = File::open(&tls_file_paths.ca_crt).expect("Cannot open CA cert file");
@@ -441,17 +538,17 @@ fn load_certs_from_file(tls_file_paths: &TlsFilePaths) -> TlsCertificates {
         .read_to_end(&mut root_cert_vec)
         .expect("Unable to read CA cert file");
 
-    let cert_file = File::open(&tls_file_paths.redis_crt).expect("cannot open private cert file");
+    let cert_file = File::open(&tls_file_paths.redis_crt).expect("Cannot open cert file");
     let mut client_cert_vec = Vec::new();
     BufReader::new(cert_file)
         .read_to_end(&mut client_cert_vec)
-        .expect("Unable to read client cert file");
+        .expect("Unable to read cert file");
 
-    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open private key file");
+    let key_file = File::open(&tls_file_paths.redis_key).expect("Cannot open key file");
     let mut client_key_vec = Vec::new();
     BufReader::new(key_file)
         .read_to_end(&mut client_key_vec)
-        .expect("Unable to read client key file");
+        .expect("Unable to read key file");
 
     TlsCertificates {
         client_tls: Some(ClientTlsConfig {
@@ -480,6 +577,45 @@ pub(crate) fn build_single_client<T: redis::IntoConnectionInfo>(
     } else {
         redis::Client::open(connection_info)
     }
+}
+
+#[cfg(feature = "tls-rustls")]
+pub(crate) fn build_single_client_with_separate_client_cert<T: redis::IntoConnectionInfo>(
+    connection_info: T,
+    tls_file_params: &TlsFilePaths,
+    client_cert_paths: &redis_test::utils::ClientCertPaths,
+) -> RedisResult<redis::Client> {
+    // Load CA cert for server verification
+    let ca_file = File::open(&tls_file_params.ca_crt).expect("Cannot open CA cert file");
+    let mut root_cert_vec = Vec::new();
+    BufReader::new(ca_file)
+        .read_to_end(&mut root_cert_vec)
+        .expect("Unable to read CA cert file");
+
+    // Load client cert and key for mTLS authentication
+    let cert_file =
+        File::open(&client_cert_paths.client_crt).expect("Cannot open client cert file");
+    let mut client_cert_vec = Vec::new();
+    BufReader::new(cert_file)
+        .read_to_end(&mut client_cert_vec)
+        .expect("Unable to read client cert file");
+
+    let key_file = File::open(&client_cert_paths.client_key).expect("Cannot open client key file");
+    let mut client_key_vec = Vec::new();
+    BufReader::new(key_file)
+        .read_to_end(&mut client_key_vec)
+        .expect("Unable to read client key file");
+
+    redis::Client::build_with_tls(
+        connection_info,
+        TlsCertificates {
+            client_tls: Some(ClientTlsConfig {
+                client_cert: client_cert_vec,
+                client_key: client_key_vec,
+            }),
+            root_cert: Some(root_cert_vec),
+        },
+    )
 }
 
 #[cfg(not(feature = "tls-rustls"))]
