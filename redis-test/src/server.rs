@@ -18,6 +18,11 @@ pub fn redis_settings() -> RedisConnectionInfo {
     RedisConnectionInfo::default().set_protocol(use_protocol())
 }
 
+/// Get the default host to use for TCP connections.
+pub fn get_default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
 #[derive(PartialEq)]
 enum ServerType {
     Tcp { tls: bool },
@@ -80,24 +85,19 @@ impl RedisServer {
         std::fs::read_to_string(self.log_file.clone()).ok()
     }
 
-    /// Get the default host to use for TCP connections.
-    pub fn get_default_host() -> String {
-        "127.0.0.1".to_string()
-    }
-
     pub fn get_addr(port: u16) -> ConnectionAddr {
         let server_type = ServerType::get_intended();
         match server_type {
             ServerType::Tcp { tls } => {
                 if tls {
                     redis::ConnectionAddr::TcpTls {
-                        host: Self::get_default_host(),
+                        host: get_default_host(),
                         port,
                         insecure: true,
                         tls_params: None,
                     }
                 } else {
-                    redis::ConnectionAddr::Tcp(Self::get_default_host(), port)
+                    redis::ConnectionAddr::Tcp(get_default_host(), port)
                 }
             }
             ServerType::Unix => {

@@ -181,9 +181,9 @@ impl TestContext {
             ConnectionAddr::TcpTls { .. } => addr, // Already TLS
             ConnectionAddr::Unix(_) => {
                 // Unix sockets don't support TLS - fall back to TCP+TLS
-                // Use the same default host that RedisServer::get_addr() would use for TCP
+                // Use the same default host that get_addr() would use for TCP
                 ConnectionAddr::TcpTls {
-                    host: RedisServer::get_default_host(),
+                    host: redis_test::server::get_default_host(),
                     port: redis_port,
                     insecure: true,
                     tls_params: None,
@@ -488,15 +488,19 @@ fn get_version(conn: &mut impl redis::ConnectionLike) -> Version {
 }
 
 /// Get the Redis server version by running `redis-server --version`.
-pub fn get_redis_binary_version() -> Version {
+/// Returns `None` if the binary is not available.
+pub fn get_redis_binary_version() -> Option<Version> {
     use std::process::Command;
 
-    let output = Command::new(
-        std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string()),
-    )
-    .arg("--version")
-    .output()
-    .expect("Failed to execute redis-server --version");
+    let binary = std::env::var("REDISRS_SERVER_BIN").unwrap_or_else(|_| "redis-server".to_string());
+
+    let output = match Command::new(&binary).arg("--version").output() {
+        Ok(output) => output,
+        Err(_) => {
+            eprintln!("Failed to execute redis-server --version");
+            return None;
+        }
+    };
 
     let full_string =
         String::from_utf8(output.stdout).expect("Invalid UTF-8 in redis-server version output");
@@ -514,7 +518,7 @@ pub fn get_redis_binary_version() -> Version {
         .collect();
 
     assert_eq!(versions.len(), 3, "Expected version format x.y.z");
-    (versions[0], versions[1], versions[2])
+    Some((versions[0], versions[1], versions[2]))
 }
 
 pub fn is_major_version(expected_version: u16, version: Version) -> bool {
@@ -553,7 +557,7 @@ macro_rules! run_test_if_version_supported {
 }
 
 /// Macro to run tests only if the version of the Redis binary meets the minimum requirement.
-/// If the version is insufficient, the test is skipped with a message.
+/// If the binary is not available or the version is insufficient, the test is skipped with a message.
 ///
 /// # Example
 /// ```rust,no_run
@@ -568,14 +572,22 @@ macro_rules! run_test_if_version_supported {
 #[macro_export]
 macro_rules! run_test_if_redis_binary_version_supported {
     ($minimum_required_version:expr) => {{
-        let redis_version = $crate::get_redis_binary_version();
-
-        if redis_version < *$minimum_required_version {
-            eprintln!(
-                "Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
-                redis_version, $minimum_required_version
-            );
-            return;
+        match $crate::get_redis_binary_version() {
+            None => {
+                eprintln!(
+                    "Skipping the test because the Redis binary was not found."
+                );
+                return;
+            }
+            Some(redis_version) => {
+                if redis_version < *$minimum_required_version {
+                    eprintln!(
+                        "Skipping the test because the current version of Redis {:?} doesn't match the minimum required version {:?}.",
+                        redis_version, $minimum_required_version
+                    );
+                    return;
+                }
+            }
         }
     }};
 }
