@@ -247,7 +247,10 @@ mod hotkeys {
 mod hotkeys_cluster {
     use crate::support::*;
     use redis::cluster::ClusterClientBuilder;
-    use redis::cluster_routing::{Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr};
+    use redis::cluster_routing::{
+        MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
+        SlotAddr,
+    };
     use redis::{
         Commands, ConnectionAddr, ConnectionInfo, HotkeysCommands, HotkeysOptions, HotkeysResponse,
         ProtocolVersion, RedisConnectionInfo, Value, cmd, from_redis_value,
@@ -481,6 +484,117 @@ mod hotkeys_cluster {
                 .expect("NET metric requested")
                 .iter()
                 .any(|e| e.key == hot_key)
+        );
+    }
+
+    /// Cluster-wide tracking via fan-out routing to every primary.
+    ///
+    /// Exercises [`MultipleNodeRoutingInfo::AllMasters`]:
+    /// - START / STOP use [`ResponsePolicy::AllSucceeded`] so every primary must accept the command.
+    /// - GET is issued without a response policy. The cluster client returns a
+    ///   [`Value::Map`] keyed by node address, which is then parsed per-node.
+    /// - No `with_slots` filter is supplied and each primary tracks the keys for the slots it owns.
+    #[rstest]
+    #[case(ProtocolVersion::RESP2)]
+    #[case(ProtocolVersion::RESP3)]
+    fn test_hotkeys_cluster_all_primaries_via_cluster_routing(#[case] protocol: ProtocolVersion) {
+        println!(
+            "Starting test_hotkeys_cluster_all_primaries_via_cluster_routing - Protocol: {protocol:?}"
+        );
+
+        let Some((cluster_ctx, _info, hot_key, target_slot)) = setup_cluster_and_target(protocol)
+        else {
+            return;
+        };
+
+        let client = ClusterClientBuilder::new(cluster_ctx.nodes.clone())
+            .use_protocol(protocol)
+            .build()
+            .unwrap();
+        let mut cluster_con = client.get_connection().unwrap();
+
+        // START on every primary. AllSucceeded aggregates per-node replies into a single Okay
+        // and turns any per-node failure into a top-level error. SLOTS is intentionally omitted:
+        // each primary already owns a disjoint subset of the 16384 hash slots, so its tracker
+        // naturally sees only its own keys, and the union across primaries is a cluster-wide view.
+        let fanout_strict = RoutingInfo::MultiNode((
+            MultipleNodeRoutingInfo::AllMasters,
+            Some(ResponsePolicy::AllSucceeded),
+        ));
+        let opts = HotkeysOptions::new_with_cpu().and_net();
+        let mut start_cmd = cmd("HOTKEYS");
+        start_cmd.arg("START").arg(&opts);
+        let start_value = cluster_con
+            .route_command(&start_cmd, fanout_strict.clone())
+            .unwrap();
+        assert_eq!(start_value, Value::Okay);
+
+        // Generate enough activity that the hot key dominates the owning primary's top-K.
+        let _: () = cluster_con.set(&hot_key, "value").unwrap();
+        for _ in 0..50 {
+            let _: String = cluster_con.get(&hot_key).unwrap();
+        }
+
+        // GET via fan-out with response_policy=None: the client returns a Value::Map keyed by
+        // node address, with each entry holding that primary's raw HOTKEYS GET reply.
+        let fanout_per_node = RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllMasters, None));
+        let mut get_cmd = cmd("HOTKEYS");
+        get_cmd.arg("GET");
+        let get_value = cluster_con
+            .route_command(&get_cmd, fanout_per_node)
+            .unwrap();
+        let Value::Map(per_node) = get_value else {
+            panic!("expected Value::Map for fan-out HOTKEYS GET, got {get_value:?}");
+        };
+        assert_eq!(
+            per_node.len(),
+            cluster_ctx.nodes.len(),
+            "expected one entry per configured primary"
+        );
+
+        // Parse every per-node entry: each must report tracking_active, and at least one
+        // primary - the one owning target_slot - must list hot_key in by_cpu_time_us.
+        let mut hotkey_found = false;
+        for (addr_val, response_val) in per_node {
+            let addr: String = from_redis_value(addr_val).unwrap();
+            let snapshot: HotkeysResponse = from_redis_value(response_val)
+                .unwrap_or_else(|e| panic!("failed to parse response from {addr}: {e:?}"));
+            assert!(
+                snapshot.tracking_active,
+                "node {addr} should have tracking active"
+            );
+            if snapshot
+                .by_cpu_time_us
+                .as_ref()
+                .is_some_and(|cpu| cpu.iter().any(|e| e.key == hot_key))
+            {
+                hotkey_found = true;
+            }
+        }
+        assert!(
+            hotkey_found,
+            "hot key {hot_key} should appear in by-cpu-time on the primary owning slot {target_slot}"
+        );
+
+        // STOP on every primary, again aggregated to a single Okay.
+        let mut stop_cmd = cmd("HOTKEYS");
+        stop_cmd.arg("STOP");
+        let stop_value = cluster_con
+            .route_command(&stop_cmd, fanout_strict.clone())
+            .unwrap();
+        assert_eq!(stop_value, Value::Okay);
+
+        // Controlled failure: with_slots(...) is a server-side filter, not a routing hint.
+        // Broadcasting SLOTS=[target_slot] to every primary forces the non-owning primaries
+        // to reject the command, which AllSucceeded surfaces as a top-level error.
+        let bad_opts = HotkeysOptions::new_with_cpu().with_slots(vec![target_slot]);
+        let mut bad_start_cmd = cmd("HOTKEYS");
+        bad_start_cmd.arg("START").arg(&bad_opts);
+        let bad_result = cluster_con.route_command(&bad_start_cmd, fanout_strict);
+        assert!(
+            bad_result.is_err(),
+            "with_slots([{target_slot}]) + AllMasters + AllSucceeded must fail \
+             because the non-owning primaries reject SLOTS, got {bad_result:?}"
         );
     }
 }

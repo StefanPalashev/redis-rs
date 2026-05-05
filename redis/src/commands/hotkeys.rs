@@ -16,8 +16,12 @@
 //! # Using HOTKEYS in Cluster Mode
 //!
 //! While the high-level `HotkeysCommands` trait is not available on `ClusterConnection`,
-//! HOTKEYS commands can still be used on individual cluster nodes by using `route_command` with
-//! explicit node routing:
+//! HOTKEYS commands can still be used in cluster mode through `route_command` with
+//! explicit routing. Two patterns are useful:
+//!
+//! ## Routing to a single node
+//!
+//! Useful for inspecting a specific shard, e.g. when investigating a known hot slot.
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "cluster")]
@@ -59,6 +63,67 @@
 //! ).unwrap();
 //! # }
 //! ```
+//!
+//! ## Routing to all primaries (cluster-wide tracking)
+//!
+//! For cluster-wide observability the natural pattern is to fan the command out to
+//! every primary so each shard tracks its own keys. `START` and `STOP` can use
+//! [`ResponsePolicy::AllSucceeded`](crate::cluster_routing::ResponsePolicy::AllSucceeded)
+//! to assert every node accepted the command. `GET` should be issued without a
+//! response policy: the response is then a [`Value::Map`] keyed by node address,
+//! and each entry is parsed with [`HotkeysResponse::from_redis_value`].
+//!
+//! ```rust,no_run
+//! # #[cfg(feature = "cluster")]
+//! # {
+//! use redis::cluster::ClusterClient;
+//! use redis::cluster_routing::{
+//!     MultipleNodeRoutingInfo, ResponsePolicy, RoutingInfo,
+//! };
+//! use redis::{cmd, from_redis_value, FromRedisValue, HotkeysOptions, HotkeysResponse, Value};
+//!
+//! let nodes = vec!["redis://127.0.0.1:6379/", "redis://127.0.0.1:6378/"];
+//! let client = ClusterClient::new(nodes).unwrap();
+//! let mut connection = client.get_connection().unwrap();
+//!
+//! // START on every primary and require success everywhere.
+//! // `with_slots` is not used in here and each primary tracks the keys for the slots it owns.
+//! let start_opts = HotkeysOptions::new_with_cpu().and_net();
+//! let _ = connection.route_command(
+//!     &cmd("HOTKEYS").arg("START").arg(&start_opts),
+//!     RoutingInfo::MultiNode((
+//!         MultipleNodeRoutingInfo::AllMasters,
+//!         Some(ResponsePolicy::AllSucceeded),
+//!     )),
+//! ).unwrap();
+//!
+//! // ... perform operations ...
+//!
+//! // GET from every primary with no policy.
+//! // The cluster client will get back the per-node responses.
+//! let value = connection.route_command(
+//!     &cmd("HOTKEYS").arg("GET"),
+//!     RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllMasters, None)),
+//! ).unwrap();
+//! if let Value::Map(per_node) = value {
+//!     for (addr_val, response_val) in per_node {
+//!         let addr: String = from_redis_value(addr_val).unwrap();
+//!         let snapshot = HotkeysResponse::from_redis_value(response_val).unwrap();
+//!         println!("node {addr}: {} hot keys by CPU",
+//!             snapshot.by_cpu_time_us.as_ref().map(|v| v.len()).unwrap_or(0));
+//!     }
+//! }
+//!
+//! // STOP on every primary.
+//! let _ = connection.route_command(
+//!     &cmd("HOTKEYS").arg("STOP"),
+//!     RoutingInfo::MultiNode((
+//!         MultipleNodeRoutingInfo::AllMasters,
+//!         Some(ResponsePolicy::AllSucceeded),
+//!     )),
+//! ).unwrap();
+//! # }
+//! ```
 
 use crate::errors::ParsingError;
 use crate::types::{FromRedisValue, RedisWrite, ToRedisArgs, Value};
@@ -96,6 +161,7 @@ pub const HOTKEYS_COUNT_MAX: u64 = 64;
 /// # }
 /// ```
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct HotkeysOptions {
     /// Track hotkeys by CPU time percentage
     cpu: bool,
@@ -220,7 +286,21 @@ impl HotkeysOptions {
     /// Set specific hash slots to track in a cluster environment.
     ///
     /// Only keys that hash to the specified slots will be tracked.
-    /// Useful for tracking hotkeys on specific shards in a Redis cluster.
+    /// Useful for narrowing tracking to a subset of the slots owned by a single shard.
+    ///
+    /// # When to use
+    ///
+    /// This option is meaningful only in cluster mode and only with **single-node**
+    /// routing (e.g. [`RoutingInfo::SingleNode`](crate::cluster_routing::RoutingInfo::SingleNode))
+    /// targeting a primary that owns the requested slots. The Redis server will
+    /// reject the command if any of the requested slots are not owned by the
+    /// receiving node.
+    ///
+    /// When fanning the command out to every node (e.g.
+    /// [`MultipleNodeRoutingInfo::AllMasters`](crate::cluster_routing::MultipleNodeRoutingInfo::AllMasters)),
+    /// omit `with_slots` and let each primary track the keys for the slots it
+    /// owns, otherwise every primary that does not own the supplied slot list
+    /// will return an error.
     ///
     /// Note: Using SLOTS when not in cluster mode will result in an error.
     pub fn with_slots(mut self, slots: Vec<u16>) -> Self {
@@ -298,6 +378,7 @@ impl ToRedisArgs for HotkeysOptions {
 
 /// A single hotkey entry with its metric value.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct HotKeyEntry {
     /// The key name.
     pub key: String,
@@ -307,6 +388,7 @@ pub struct HotKeyEntry {
 
 /// Represents a range of slots.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct SlotRange {
     /// Start of the slot range (inclusive).
     pub start: u16,
@@ -320,6 +402,7 @@ pub struct SlotRange {
 /// including tracking metadata, performance statistics, and lists of top K
 /// hot keys sorted by the metrics specified in HOTKEYS START.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct HotkeysResponse {
     /// Whether tracking is currently active (1) or stopped (0).
     pub tracking_active: bool,
