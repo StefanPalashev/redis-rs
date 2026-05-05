@@ -220,6 +220,10 @@ required-features = ["script"]
 [[test]]
 name = "test_digest_utils"
 
+[[test]]
+name = "test_tls_cert_auth"
+required-features = ["acl", "tls-rustls", "tokio-rustls-comp", "cluster"]
+
 [[bench]]
 name = "bench_basic"
 harness = false
