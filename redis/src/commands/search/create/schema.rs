@@ -2,6 +2,7 @@
 use super::fields::{
     SchemaGeoField, SchemaGeoShapeField, SchemaNumericField, SchemaTagField, SchemaTextField,
 };
+use super::vector::VectorField;
 use crate::{RedisWrite, ToRedisArgs};
 use std::marker::PhantomData;
 
@@ -17,6 +18,8 @@ pub enum FieldDefinition {
     Geo(SchemaGeoField),
     /// Tag field
     Tag(SchemaTagField),
+    /// Vector field
+    Vector(VectorField),
     /// Geo shape field
     GeoShape(SchemaGeoShapeField),
 }
@@ -31,6 +34,7 @@ impl ToRedisArgs for FieldDefinition {
             FieldDefinition::Numeric(nf) => nf.write_redis_args(out),
             FieldDefinition::Geo(gf) => gf.write_redis_args(out),
             FieldDefinition::Tag(tf) => tf.write_redis_args(out),
+            FieldDefinition::Vector(v) => v.write_redis_args(out),
             FieldDefinition::GeoShape(gs) => gs.write_redis_args(out),
         }
     }
@@ -57,6 +61,12 @@ impl From<SchemaGeoField> for FieldDefinition {
 impl From<SchemaTagField> for FieldDefinition {
     fn from(field: SchemaTagField) -> Self {
         FieldDefinition::Tag(field)
+    }
+}
+
+impl From<VectorField> for FieldDefinition {
+    fn from(field: VectorField) -> Self {
+        FieldDefinition::Vector(field)
     }
 }
 
