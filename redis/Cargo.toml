@@ -126,6 +126,7 @@ bloom = []
 geospatial = []
 json = ["dep:serde", "serde/derive", "dep:serde_json"]
 vector-sets = ["dep:serde", "serde/derive", "dep:serde_json"]
+search = []
 cluster = ["dep:crc16", "dep:rand"]
 script = ["dep:sha1_smol"]
 tls-native-tls = ["dep:native-tls"]
@@ -212,6 +213,10 @@ required-features = ["bloom"]
 [[test]]
 name = "test_module_json"
 required-features = ["json", "serde/derive"]
+
+[[test]]
+name = "test_module_search"
+required-features = ["search"]
 
 [[test]]
 name = "test_cluster_async"
