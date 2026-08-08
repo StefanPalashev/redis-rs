@@ -9,13 +9,16 @@ use super::fields::{BaseSchemaField, FieldType};
 use crate::{RedisWrite, ToRedisArgs};
 
 mod flat;
+mod hnsw;
 
 pub use flat::*;
+pub use hnsw::*;
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub(crate) enum VectorAlgorithm {
     Flat,
+    Hnsw,
 }
 
 impl ToRedisArgs for VectorAlgorithm {
@@ -25,6 +28,7 @@ impl ToRedisArgs for VectorAlgorithm {
     {
         out.write_arg(match self {
             Self::Flat => b"FLAT",
+            Self::Hnsw => b"HNSW",
         });
     }
 }
@@ -132,6 +136,8 @@ impl ToRedisArgs for SchemaVectorField {
 /// # Algorithms
 ///
 /// - **FLAT**: Brute-force exact search. Best for small datasets (< 1M vectors) where perfect accuracy is required.
+/// - **HNSW**: Hierarchical Navigable Small World graph-based approximate search. Best for large datasets (> 1M vectors)
+///   where search performance and scalability are more important than perfect accuracy.
 ///
 /// # Examples
 ///
@@ -142,6 +148,12 @@ impl ToRedisArgs for SchemaVectorField {
 /// let flat_field = VectorField::flat(VectorType::Float32, 128, DistanceMetric::Cosine)
 ///     .block_size(1000)
 ///     .build();
+///
+/// // HNSW index for approximate search
+/// let hnsw_field = VectorField::hnsw(VectorType::Float32, 128, DistanceMetric::Cosine)
+///     .m(16)
+///     .ef_construction(200)
+///     .build();
 /// ```
 #[must_use = "Vector field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
@@ -150,13 +162,19 @@ pub enum VectorField {
     /// FLAT (brute-force) vector index for exact nearest neighbor search.
     /// Best for small datasets (< 1M vectors) where perfect accuracy is required.
     Flat(SchemaVectorField, FlatVectorOptions),
+
+    /// HNSW (Hierarchical Navigable Small World) vector index for approximate nearest neighbor search.
+    /// Best for large datasets (> 1M vectors) where performance is more important than perfect accuracy.
+    Hnsw(SchemaVectorField, HnswVectorOptions),
 }
 
 impl VectorField {
     /// Set the alias for the field.
     pub fn alias(mut self, alias: impl Into<String>) -> Self {
         match self {
-            Self::Flat(ref mut base, _) => base.base = base.base.clone().alias(alias),
+            Self::Flat(ref mut base, _) | Self::Hnsw(ref mut base, _) => {
+                base.base = base.base.clone().alias(alias);
+            }
         }
         self
     }
@@ -164,7 +182,7 @@ impl VectorField {
     /// Set index missing. This allows searching for missing values - documents that do not contain a specific field.
     pub fn index_missing(mut self, index_missing: bool) -> Self {
         match self {
-            Self::Flat(ref mut base, _) => {
+            Self::Flat(ref mut base, _) | Self::Hnsw(ref mut base, _) => {
                 base.base = base.base.clone().index_missing(index_missing);
             }
         }
@@ -178,13 +196,16 @@ impl ToRedisArgs for VectorField {
         W: ?Sized + RedisWrite,
     {
         let base = match self {
-            Self::Flat(base, _) => base,
+            Self::Flat(base, _) | Self::Hnsw(base, _) => base,
         };
         base.write_redis_args(out);
 
         let attributes_count = match self {
             Self::Flat(base, flat_vector_options) => {
                 base.num_of_args() + flat_vector_options.num_of_args()
+            }
+            Self::Hnsw(base, hnsw_vector_options) => {
+                base.num_of_args() + hnsw_vector_options.num_of_args()
             }
         };
         attributes_count.write_redis_args(out);
@@ -200,6 +221,9 @@ impl ToRedisArgs for VectorField {
         match self {
             Self::Flat(_, flat_vector_options) => {
                 flat_vector_options.write_redis_args(out);
+            }
+            Self::Hnsw(_, hnsw_vector_options) => {
+                hnsw_vector_options.write_redis_args(out);
             }
         }
 
@@ -224,6 +248,26 @@ impl VectorField {
         FlatVectorFieldBuilder::new(SchemaVectorField {
             base: BaseSchemaField::new(FieldType::Vector),
             algorithm: VectorAlgorithm::Flat,
+            vector_type,
+            dim,
+            distance_metric,
+        })
+    }
+
+    /// Create a new HNSW vector field
+    pub fn hnsw(
+        vector_type: VectorType,
+        dim: u32,
+        distance_metric: DistanceMetric,
+    ) -> HnswVectorFieldBuilder {
+        assert!(
+            dim > 0,
+            "Vector dimension must be positive (greater than 0)"
+        );
+
+        HnswVectorFieldBuilder::new(SchemaVectorField {
+            base: BaseSchemaField::new(FieldType::Vector),
+            algorithm: VectorAlgorithm::Hnsw,
             vector_type,
             dim,
             distance_metric,
