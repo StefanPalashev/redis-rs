@@ -10,15 +10,18 @@ use crate::{RedisWrite, ToRedisArgs};
 
 mod flat;
 mod hnsw;
+mod vamana;
 
 pub use flat::*;
 pub use hnsw::*;
+pub use vamana::*;
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub(crate) enum VectorAlgorithm {
     Flat,
     Hnsw,
+    Vamana,
 }
 
 impl ToRedisArgs for VectorAlgorithm {
@@ -29,6 +32,7 @@ impl ToRedisArgs for VectorAlgorithm {
         out.write_arg(match self {
             VectorAlgorithm::Flat => b"FLAT",
             VectorAlgorithm::Hnsw => b"HNSW",
+            VectorAlgorithm::Vamana => b"SVS-VAMANA",
         });
     }
 }
@@ -138,6 +142,9 @@ impl ToRedisArgs for SchemaVectorField {
 /// - **FLAT**: Brute-force exact search. Best for small datasets (< 1M vectors) where perfect accuracy is required.
 /// - **HNSW**: Hierarchical Navigable Small World graph-based approximate search. Best for large datasets (> 1M vectors)
 ///   where search performance and scalability are more important than perfect accuracy.
+/// - **SVS-VAMANA**: Intel's Scalable Vector Search with graph-based approximate search and compression support.
+///   Best when you need high performance with reduced memory usage, especially on Intel hardware.
+///   More information at: <https://intel.github.io/ScalableVectorSearch/intro.html>
 ///
 /// # Examples
 ///
@@ -154,6 +161,12 @@ impl ToRedisArgs for SchemaVectorField {
 ///     .m(16)
 ///     .ef_construction(200)
 ///     .build();
+///
+/// // VAMANA index with compression (note: uses VamanaVectorType for type safety)
+/// let vamana_field = VectorField::vamana(VamanaVectorType::Float32, 128, DistanceMetric::Cosine)
+///     .compression(CompressionType::LVQ8)
+///     .graph_max_degree(64)
+///     .build();
 /// ```
 #[must_use = "Vector field has no effect unless inserted into a schema"]
 #[derive(Debug, Clone)]
@@ -166,15 +179,19 @@ pub enum VectorField {
     /// HNSW (Hierarchical Navigable Small World) vector index for approximate nearest neighbor search.
     /// Best for large datasets (> 1M vectors) where performance is more important than perfect accuracy.
     Hnsw(SchemaVectorField, HnswVectorOptions),
+
+    /// SVS-VAMANA vector index with compression support for memory-efficient approximate search.
+    /// Best when you need high performance with reduced memory usage, especially on Intel hardware.
+    Vamana(SchemaVectorField, VamanaVectorOptions),
 }
 
 impl VectorField {
     /// Set the alias for the field.
     pub fn alias(mut self, alias: impl Into<String>) -> Self {
         match self {
-            VectorField::Flat(ref mut base, _) | VectorField::Hnsw(ref mut base, _) => {
-                base.base = base.base.clone().alias(alias)
-            }
+            VectorField::Flat(ref mut base, _)
+            | VectorField::Hnsw(ref mut base, _)
+            | VectorField::Vamana(ref mut base, _) => base.base = base.base.clone().alias(alias),
         };
         self
     }
@@ -182,7 +199,9 @@ impl VectorField {
     /// Set index missing. This allows searching for missing values - documents that do not contain a specific field.
     pub fn index_missing(mut self, index_missing: bool) -> Self {
         match self {
-            VectorField::Flat(ref mut base, _) | VectorField::Hnsw(ref mut base, _) => {
+            VectorField::Flat(ref mut base, _)
+            | VectorField::Hnsw(ref mut base, _)
+            | VectorField::Vamana(ref mut base, _) => {
                 base.base = base.base.clone().index_missing(index_missing)
             }
         };
@@ -196,7 +215,9 @@ impl ToRedisArgs for VectorField {
         W: ?Sized + RedisWrite,
     {
         let base = match self {
-            VectorField::Flat(base, _) | VectorField::Hnsw(base, _) => base,
+            VectorField::Flat(base, _)
+            | VectorField::Hnsw(base, _)
+            | VectorField::Vamana(base, _) => base,
         };
         base.write_redis_args(out);
 
@@ -206,6 +227,9 @@ impl ToRedisArgs for VectorField {
             }
             VectorField::Hnsw(base, hnsw_vector_options) => {
                 base.num_of_args() + hnsw_vector_options.num_of_args()
+            }
+            VectorField::Vamana(base, vamana_vector_options) => {
+                base.num_of_args() + vamana_vector_options.num_of_args()
             }
         };
         attributes_count.write_redis_args(out);
@@ -224,6 +248,9 @@ impl ToRedisArgs for VectorField {
             }
             VectorField::Hnsw(_, hnsw_vector_options) => {
                 hnsw_vector_options.write_redis_args(out);
+            }
+            VectorField::Vamana(_, vamana_vector_options) => {
+                vamana_vector_options.write_redis_args(out);
             }
         }
 
@@ -269,6 +296,26 @@ impl VectorField {
             base: BaseSchemaField::new(FieldType::Vector),
             algorithm: VectorAlgorithm::Hnsw,
             vector_type,
+            dim,
+            distance_metric,
+        })
+    }
+
+    /// Create a new VAMANA vector field
+    pub fn vamana(
+        vector_type: VamanaVectorType,
+        dim: u32,
+        distance_metric: DistanceMetric,
+    ) -> VamanaVectorFieldBuilder {
+        assert!(
+            dim > 0,
+            "Vector dimension must be positive (greater than 0)"
+        );
+
+        VamanaVectorFieldBuilder::new(SchemaVectorField {
+            base: BaseSchemaField::new(FieldType::Vector),
+            algorithm: VectorAlgorithm::Vamana,
+            vector_type: vector_type.into(),
             dim,
             distance_metric,
         })
