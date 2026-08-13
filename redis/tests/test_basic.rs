@@ -23,7 +23,9 @@ mod basic {
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
     #[cfg(feature = "redis-arrays-preview-unfinished")]
-    use redis::redis_arrays::ArrayLastItemsOptions;
+    use redis::redis_arrays::{
+        ArrayAggregateOp, ArrayInfoOptions, ArrayLastItemsOptions, ArrayScanOptions,
+    };
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
@@ -4494,6 +4496,117 @@ mod basic {
                 Some("c".to_string()),
             ])
         );
+    }
+
+    /// Validates the scan / aggregate / introspection commands of the Array data type (Redis 8.8+):
+    /// `ARSCAN`, `AROP`, `ARINFO`.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_scan_aggregate_and_info() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // ARSCAN - index-value pairs over a sparse array
+        let key = "test_array_arscan";
+        con.armset(key, &[(0, "a"), (2, "c"), (5, "f"), (9, "j")])
+            .unwrap();
+        assert_eq!(
+            con.arscan(key, 0, 10),
+            Ok(vec![
+                (0, "a".to_string()),
+                (2, "c".to_string()),
+                (5, "f".to_string()),
+                (9, "j".to_string()),
+            ])
+        );
+        // LIMIT pages the results.
+        let limit_2 = ArrayScanOptions::default().set_limit(NonZeroUsize::new(2).unwrap());
+        assert_eq!(
+            con.arscan_options(key, 0, 10, &limit_2),
+            Ok(vec![(0, "a".to_string()), (2, "c".to_string())])
+        );
+        // continue by advancing `start`.
+        assert_eq!(
+            con.arscan_options(key, 3, 10, &limit_2),
+            Ok(vec![(5, "f".to_string()), (9, "j".to_string())])
+        );
+        // start > end iterates in reverse.
+        assert_eq!(
+            con.arscan(key, 10, 0),
+            Ok(vec![
+                (9, "j".to_string()),
+                (5, "f".to_string()),
+                (2, "c".to_string()),
+                (0, "a".to_string()),
+            ])
+        );
+        // Missing key yields no pairs.
+        assert_eq!(
+            con.arscan("missing_arscan", 0, 10),
+            Ok(Vec::<(usize, String)>::new())
+        );
+
+        // AROP - aggregate operations, return type chosen per operation
+        let key = "test_array_arop";
+        con.armset(key, &[(0, "10"), (1, "20"), (2, "30"), (4, "5")])
+            .unwrap();
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Sum), Ok(65));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Min), Ok(5));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Max), Ok(30));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::And), Ok(0));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Or), Ok(31));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Xor), Ok(5));
+        assert_eq!(con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Used), Ok(4));
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 4, ArrayAggregateOp::Match("20")),
+            Ok(1)
+        );
+        // A fractional SUM comes back as a float.
+        let key_float = "test_array_arop_float";
+        con.armset(key_float, &[(0, "1.5"), (1, "2.25"), (2, "3")])
+            .unwrap();
+        assert_eq!(
+            con.arop::<f64, _>(key_float, 0, 2, ArrayAggregateOp::Sum),
+            Ok(6.75)
+        );
+        // MIN/MAX on a non-numeric range is nil.
+        let key_str = "test_array_arop_str";
+        con.armset(key_str, &[(0, "foo"), (1, "bar")]).unwrap();
+        assert_eq!(
+            con.arop::<Option<i64>, _>(key_str, 0, 1, ArrayAggregateOp::Min),
+            Ok(None)
+        );
+
+        // ARINFO - metadata map
+        let key = "test_array_arinfo";
+        con.armset(
+            key,
+            &[
+                (0, "a"),
+                (1, "b"),
+                (2, "c"),
+                (3, "d"),
+                (4, "e"),
+                (5, "f"),
+                (6, "g"),
+            ],
+        )
+        .unwrap();
+        let info = con.arinfo(key, &ArrayInfoOptions::default()).unwrap();
+        assert_eq!(info.get("count"), Some(&redis::Value::Int(7)));
+        assert!(info.contains_key("len"));
+        assert!(info.contains_key("next-insert-index"));
+        // FULL adds per-slice statistics.
+        let full = con
+            .arinfo(key, &ArrayInfoOptions::default().set_full(true))
+            .unwrap();
+        assert!(full.contains_key("dense-slices"));
+        assert!(full.len() > info.len());
+        // A missing key is an error, not an empty map.
+        let err = con
+            .arinfo("missing_arinfo", &ArrayInfoOptions::default())
+            .unwrap_err();
+        assert_eq!(err.kind(), ServerErrorKind::ResponseError.into());
     }
 
     /// Validates Array behavior on missing keys, empty values, and invalid arguments.

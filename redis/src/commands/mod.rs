@@ -62,18 +62,20 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARLASTITEMS" | b"ARLEN" | b"ARMGET"
-        | b"ARNEXT" | b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS"
-        | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS"
-        | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS"
-        | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS"
-        | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX"
-        | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER"
-        | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR"
-        | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD"
-        | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK"
-        | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE"
-        | b"ZUNION" => Properties::ReadOnlyCacheable,
+        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARINFO" | b"ARLASTITEMS" | b"ARLEN"
+        | b"ARMGET" | b"ARNEXT" | b"AROP" | b"ARSCAN" | b"BITCOUNT" | b"BITFIELD_RO"
+        | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET"
+        | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN"
+        | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET"
+        | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN"
+        | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET"
+        | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS"
+        | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT"
+        | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE"
+        | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX"
+        | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
+            Properties::ReadOnlyCacheable
+        }
 
         b"ACL CAT"
         | b"ACL DELUSER"
@@ -1749,6 +1751,48 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
     fn arlastitems<K: ToSingleRedisArg>(key: K, count: usize, options: &'a redis_arrays::ArrayLastItemsOptions) -> (Vec<Option<String>>) {
         cmd("ARLASTITEMS").arg(key).arg(count).arg(options).take()
+    }
+
+    /// Iterate the existing (populated) elements in the inclusive index range `[start, end]`, returning `(index, value)` pairs.
+    ///
+    /// Empty slots are skipped (unlike `ARGETRANGE`, which pads with nils).
+    /// If `start > end` the pairs are returned in reverse index order.
+    /// To page, use `arscan_options` with a `LIMIT` and pass the index after the last returned one as the next `start`.
+    /// [Redis Docs](https://redis.io/commands/ARSCAN)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arscan<K: ToSingleRedisArg>(key: K, start: usize, end: usize) -> (Vec<(usize, String)>) {
+        cmd("ARSCAN").arg(key).arg(start).arg(end).take()
+    }
+
+    /// Like `arscan`, but with a `LIMIT` on the number of pairs returned.
+    /// [Redis Docs](https://redis.io/commands/ARSCAN)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arscan_options<K: ToSingleRedisArg>(key: K, start: usize, end: usize, options: &'a redis_arrays::ArrayScanOptions) -> (Vec<(usize, String)>) {
+        cmd("ARSCAN").arg(key).arg(start).arg(end).arg(options).take()
+    }
+
+    /// Perform an aggregate operation over the elements in the inclusive index range `[start, end]` of an array.
+    ///
+    /// The reply type depends on the [`operation`](redis_arrays::ArrayAggregateOp), so the return type is generic and chosen by the caller
+    /// (e.g. `i64` for bitwise/count operations, `f64` for a fractional `SUM`, or `Option<_>` when the range may hold no numeric elements).
+    /// [Redis Docs](https://redis.io/commands/AROP)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arop<K: ToSingleRedisArg>(key: K, start: usize, end: usize, operation: redis_arrays::ArrayAggregateOp<'a>) -> Generic {
+        cmd("AROP").arg(key).arg(start).arg(end).arg(operation).take()
+    }
+
+    /// Return metadata about an array as a field-value map.
+    ///
+    /// With [`ArrayInfoOptions::set_full`](redis_arrays::ArrayInfoOptions::set_full), additional per-slice statistics are included (at O(N) cost).
+    /// Querying a key that does not exist is an error, not an empty map.
+    /// [Redis Docs](https://redis.io/commands/ARINFO)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arinfo<K: ToSingleRedisArg>(key: K, options: &'a redis_arrays::ArrayInfoOptions) -> (std::collections::HashMap<String, crate::Value>) {
+        cmd("ARINFO").arg(key).arg(options).take()
     }
 
     // hyperloglog commands
