@@ -58,17 +58,19 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"ARCOUNT" | b"ARGET" | b"ARLEN" | b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP"
-        | b"EXISTS" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE"
-        | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN"
-        | b"HVALS" | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN"
-        | b"JSON.OBJKEYS" | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE"
-        | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF"
-        | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN"
-        | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER"
-        | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX"
-        | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE"
-        | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => Properties::ReadOnlyCacheable,
+        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARLEN" | b"ARMGET" | b"BITCOUNT"
+        | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST" | b"GEOHASH"
+        | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL"
+        | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
+        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
+        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
+        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
+        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
+        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
+        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
+        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
+            Properties::ReadOnlyCacheable
+        }
 
         b"ACL CAT"
         | b"ACL DELUSER"
@@ -1640,6 +1642,53 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
     fn arcount<K: ToSingleRedisArg>(key: K) -> (usize) {
         cmd("ARCOUNT").arg(key).take()
+    }
+
+    /// Set multiple `(index, value)` pairs in an array in a single command.
+    ///
+    /// Pairs may be non-contiguous and given in any order.
+    /// Returns the number of new (previously-empty) slots that were filled.
+    /// Overwriting existing slots does not count.
+    /// [Redis Docs](https://redis.io/commands/ARMSET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn armset<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &'a [(usize, V)]) -> (usize) {
+        cmd("ARMSET").arg(key).arg(items).take()
+    }
+
+    /// Get the values at multiple indices in an array.
+    ///
+    /// The reply preserves the order of the requested indices, with `None` for any index that is empty (a gap in a sparse array) or out of range.
+    /// [Redis Docs](https://redis.io/commands/ARMGET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn armget<K: ToSingleRedisArg>(key: K, indices: &'a [usize]) -> (Vec<Option<String>>) {
+        cmd("ARMGET").arg(key).arg(indices).take()
+    }
+
+    /// Get the values in the inclusive index range `[start, end]` (both bounds are inclusive) of an array.
+    ///
+    /// The reply has one entry per index in the range, with `None` for empty slots.
+    /// Indices past the array length are padded with `None`.
+    /// If `start > end` the values are returned in reverse index order.
+    /// [Redis Docs](https://redis.io/commands/ARGETRANGE)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn argetrange<K: ToSingleRedisArg>(key: K, start: usize, end: usize) -> (Vec<Option<String>>) {
+        cmd("ARGETRANGE").arg(key).arg(start).arg(end).take()
+    }
+
+    /// Delete the elements in one or more inclusive index ranges of an array.
+    ///
+    /// Each `(start, end)` pair is an inclusive range. A pair with `start > end` is treated the same as its ascending form.
+    /// Overlapping ranges count each element at most once.
+    /// Returns the number of elements actually deleted.
+    /// Like `ARDEL`, this clears slots in place without shifting or compacting the remaining elements.
+    /// [Redis Docs](https://redis.io/commands/ARDELRANGE)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn ardelrange<K: ToSingleRedisArg>(key: K, ranges: &'a [(usize, usize)]) -> (usize) {
+        cmd("ARDELRANGE").arg(key).arg(ranges).take()
     }
 
     // hyperloglog commands
