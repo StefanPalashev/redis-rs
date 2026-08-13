@@ -4257,6 +4257,84 @@ mod basic {
         assert_eq!(error.kind(), redis::ServerErrorKind::ResponseError.into());
     }
 
+    /// Validates the core read/write surface of the Array data type (Redis 8.8+):
+    /// `ARSET`, `ARGET`, `ARLEN`, `ARCOUNT` and `ARDEL`, including sparse-array semantics.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_basic_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array";
+
+        // ARSET
+        // of a single new slot returns 1 (one previously-empty slot filled).
+        assert_eq!(con.arset(key, 0, "hello"), Ok(1));
+        // of multiple contiguous values starting at index 2 fills 3 new slots.
+        assert_eq!(con.arset(key, 2, &["a", "b", "c"]), Ok(3));
+        // Using ARSET to overwrite an existing slot returns 0 as it does not fill a new slot.
+        assert_eq!(con.arset(key, 0, "world"), Ok(0));
+
+        // ARGET returns:
+        // the value at a populated index.
+        assert_eq!(con.arget(key, 0), Ok(Some("world".to_string())));
+        assert_eq!(con.arget(key, 4), Ok(Some("c".to_string())));
+        // None for a gap in the sparse array.
+        assert_eq!(con.arget(key, 1), Ok(None));
+        // None for an out-of-range index.
+        assert_eq!(con.arget(key, 99), Ok(None));
+
+        // ARLEN is max index + 1 (sparse), not the populated count.
+        assert_eq!(con.arlen(key), Ok(5));
+        // ARCOUNT is the populated count (indices 0, 2, 3, 4), unaffected by gaps.
+        assert_eq!(con.arcount(key), Ok(4));
+
+        // ARDEL of two indices removes both and reports 2.
+        assert_eq!(con.ardel(key, &[0, 2]), Ok(2));
+        // ARGET of a deleted index returns None.
+        assert_eq!(con.arget(key, 0), Ok(None));
+        // Deleting an already-empty index counts as zero.
+        assert_eq!(con.ardel(key, &[99]), Ok(0));
+        // Deleting does not shrink the reported length, unless it is the last index, but it does reduce the populated count (indices 3, 4 remain).
+        assert_eq!(con.arlen(key), Ok(5));
+        assert_eq!(con.arcount(key), Ok(2));
+        // However, deleting the last element shrinks the array.
+        assert_eq!(con.ardel(key, &[4]), Ok(1));
+        assert_eq!(con.arlen(key), Ok(4));
+        assert_eq!(con.arcount(key), Ok(1));
+    }
+
+    /// Validates Array behavior on missing keys, empty values, and invalid arguments.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_edge_cases() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // Operations on a non-existent key.
+        assert_eq!(con.arlen("missing_array"), Ok(0));
+        assert_eq!(con.arcount("missing_array"), Ok(0));
+        assert_eq!(con.arget("missing_array", 0), Ok(None));
+        assert_eq!(con.ardel("missing_array", &[0]), Ok(0));
+
+        // Empty-string values are valid and occupy a slot.
+        let key = "test_array_empty";
+        assert_eq!(con.arset(key, 0, ""), Ok(1));
+        assert_eq!(con.arget(key, 0), Ok(Some(String::new())));
+        assert_eq!(con.arlen(key), Ok(1));
+
+        // Sparse high indices extend the reported length.
+        let sparse = "test_array_sparse";
+        assert_eq!(con.arset(sparse, 1_000_000, "z"), Ok(1));
+        assert_eq!(con.arlen(sparse), Ok(1_000_001));
+
+        // AR* commands against a wrong-type key surface a WRONGTYPE error.
+        let str_key = "test_array_wrongtype";
+        con.set(str_key, "not an array").unwrap();
+        let err = con.arget(str_key, 0).unwrap_err();
+        assert_eq!(err.code(), Some("WRONGTYPE"));
+    }
+
     #[test]
     fn test_push_manager() {
         let ctx = TestContext::new();
