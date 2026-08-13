@@ -22,6 +22,8 @@ mod basic {
     use redis::{RedisError, ServerErrorKind};
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    use redis::redis_arrays::ArrayLastItemsOptions;
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
         EmbeddingInput, VAddOptions, VEmbOptions, VSimOptions, VectorAddInput, VectorQuantization,
@@ -30,6 +32,8 @@ mod basic {
     use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    use std::num::NonZeroUsize;
 
     use assert_matches::assert_matches;
     #[cfg(feature = "vector-sets")]
@@ -4414,6 +4418,82 @@ mod basic {
         );
         // Deleting the top elements lowers the reported length to max-index + 1.
         assert_eq!(con.arlen(key), Ok(4));
+    }
+
+    /// Validates the write-cursor commands of the Array data type (Redis 8.8+):
+    /// `ARINSERT`, `ARNEXT`, `ARSEEK`, `ARRING` and `ARLASTITEMS`.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_cursor_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_cursor";
+        // A new key's write cursor starts at 0.
+        assert_eq!(con.arnext(key), Ok(0));
+
+        // ARINSERT appends at consecutive indices and returns the last index written.
+        assert_eq!(con.arinsert(key, &["a", "b", "c"]), Ok(2));
+        // The cursor has advanced past the last write.
+        assert_eq!(con.arnext(key), Ok(3));
+        assert_eq!(
+            con.argetrange(key, 0, 2),
+            Ok(vec![
+                Some("a".to_string()),
+                Some("b".to_string()),
+                Some("c".to_string()),
+            ])
+        );
+
+        // ARSEEK moves the cursor and reports success.
+        assert_eq!(con.arseek(key, 10), Ok(true));
+        assert_eq!(con.arnext(key), Ok(10));
+        // The next insert lands there.
+        assert_eq!(con.arinsert(key, "z"), Ok(10));
+        assert_eq!(con.arget(key, 10), Ok(Some("z".to_string())));
+        assert_eq!(con.arnext(key), Ok(11));
+
+        // ARSET does not move the write cursor.
+        let key = "test_array_cursor_set";
+        con.arset(key, 5, "x").unwrap();
+        assert_eq!(con.arnext(key), Ok(0));
+
+        // ARLASTITEMS returns the most recent elements, optionally reversed, with None for recently-inserted slots that were deleted.
+        let last = "test_array_cursor_last";
+        con.arinsert(last, &["a", "b", "c", "d", "e"]).unwrap();
+        assert_eq!(
+            con.arlastitems(last, 2, &ArrayLastItemsOptions::default()),
+            Ok(vec![Some("d".to_string()), Some("e".to_string()),])
+        );
+        assert_eq!(
+            con.arlastitems(last, 2, &ArrayLastItemsOptions::default().set_rev(true)),
+            Ok(vec![Some("e".to_string()), Some("d".to_string()),])
+        );
+        con.ardel(last, &[3]).unwrap();
+        assert_eq!(
+            con.arlastitems(last, 3, &ArrayLastItemsOptions::default()),
+            Ok(vec![Some("c".to_string()), None, Some("e".to_string()),])
+        );
+
+        // ARRING wraps a fixed-size buffer, overwriting the oldest slots.
+        let ring = "test_array_cursor_ring";
+        assert_eq!(
+            con.arring(
+                ring,
+                NonZeroUsize::new(3).unwrap(),
+                &["a", "b", "c", "d", "e"]
+            ),
+            Ok(1)
+        );
+        assert_eq!(con.arlen(ring), Ok(3));
+        assert_eq!(
+            con.argetrange(ring, 0, 2),
+            Ok(vec![
+                Some("d".to_string()),
+                Some("e".to_string()),
+                Some("c".to_string()),
+            ])
+        );
     }
 
     /// Validates Array behavior on missing keys, empty values, and invalid arguments.

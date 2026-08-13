@@ -45,6 +45,10 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub mod vector_sets;
 
+#[cfg(feature = "redis-arrays-preview-unfinished")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+pub mod redis_arrays;
+
 pub mod hotkeys;
 
 #[cfg(any(feature = "cluster", feature = "cache-aio"))]
@@ -58,19 +62,18 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARLEN" | b"ARMGET" | b"BITCOUNT"
-        | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST" | b"GEOHASH"
-        | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL"
-        | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
-        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
-        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
-        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
-        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
-        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
-        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
-        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
-            Properties::ReadOnlyCacheable
-        }
+        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARLASTITEMS" | b"ARLEN" | b"ARMGET"
+        | b"ARNEXT" | b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS"
+        | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS"
+        | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS"
+        | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS"
+        | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX"
+        | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER"
+        | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR"
+        | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD"
+        | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK"
+        | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE"
+        | b"ZUNION" => Properties::ReadOnlyCacheable,
 
         b"ACL CAT"
         | b"ACL DELUSER"
@@ -1689,6 +1692,63 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
     fn ardelrange<K: ToSingleRedisArg>(key: K, ranges: &'a [(usize, usize)]) -> (usize) {
         cmd("ARDELRANGE").arg(key).arg(ranges).take()
+    }
+
+    /// Insert one or more values at consecutive indices, starting at the array's write cursor.
+    ///
+    /// The write cursor begins at `0` for a new key and advances past the last written index after each insert (see `ARNEXT` to read it and `ARSEEK` to move it).
+    /// Inserting overwrites whatever occupies the target slots and it does not shift existing elements.
+    /// The cursor is only affected by `ARINSERT`, `ARRING` and `ARSEEK` - **not** by `ARSET`.
+    /// Returns the index of the last element written.
+    /// [Redis Docs](https://redis.io/commands/ARINSERT)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arinsert<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, values: V) -> (usize) {
+        cmd("ARINSERT").arg(key).arg(values).take()
+    }
+
+    /// Get the index that the next `ARINSERT` would write to (the write cursor).
+    ///
+    /// Returns `0` for a key that does not exist.
+    /// [Redis Docs](https://redis.io/commands/ARNEXT)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arnext<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("ARNEXT").arg(key).take()
+    }
+
+    /// Set the `ARINSERT` / `ARRING` write cursor to a specific index.
+    ///
+    /// Returns `true` on success.
+    /// [Redis Docs](https://redis.io/commands/ARSEEK)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arseek<K: ToSingleRedisArg>(key: K, index: usize) -> (bool) {
+        cmd("ARSEEK").arg(key).arg(index).take()
+    }
+
+    /// Insert one or more values into a fixed-size ring buffer, wrapping the write cursor and overwriting the oldest slots once `size` is reached.
+    ///
+    /// Shares the write cursor with `ARINSERT` (see `ARNEXT` / `ARSEEK`).
+    /// Returns the index of the last element written.
+    /// [Redis Docs](https://redis.io/commands/ARRING)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arring<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, size: std::num::NonZeroUsize, values: V) -> (usize) {
+        cmd("ARRING").arg(key).arg(size).arg(values).take()
+    }
+
+    /// Get the `count` most recently inserted elements of an array.
+    ///
+    /// Returned in ascending index order by default, or newest first with [`ArrayLastItemsOptions::set_rev`](redis_arrays::ArrayLastItemsOptions::set_rev).
+    /// Entries are `None` for recently-inserted slots that have since been deleted.
+    /// Fewer than `count` entries are returned if the array holds fewer elements.
+    /// A missing key yields an empty result.
+    /// [Redis Docs](https://redis.io/commands/ARLASTITEMS)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arlastitems<K: ToSingleRedisArg>(key: K, count: usize, options: &'a redis_arrays::ArrayLastItemsOptions) -> (Vec<Option<String>>) {
+        cmd("ARLASTITEMS").arg(key).arg(count).arg(options).take()
     }
 
     // hyperloglog commands
