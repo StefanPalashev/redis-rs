@@ -58,18 +58,17 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST"
-        | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET"
-        | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
-        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
-        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
-        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
-        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
-        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
-        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
-        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
-            Properties::ReadOnlyCacheable
-        }
+        b"ARCOUNT" | b"ARGET" | b"ARLEN" | b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP"
+        | b"EXISTS" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE"
+        | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN"
+        | b"HVALS" | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN"
+        | b"JSON.OBJKEYS" | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE"
+        | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF"
+        | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN"
+        | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER"
+        | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX"
+        | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE"
+        | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => Properties::ReadOnlyCacheable,
 
         b"ACL CAT"
         | b"ACL DELUSER"
@@ -1580,6 +1579,67 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim_options<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput<'a>, options: &'a vector_sets::VSimOptions) -> Generic {
         cmd("VSIM").arg(key).arg(input).arg(options).take()
+    }
+
+    // Array commands (Redis 8.8+)
+
+    /// Set one or more contiguous values in an array, starting at `index`.
+    ///
+    /// Returns the number of new (previously-empty) slots that were filled.
+    /// Overwriting existing slots does not count towards the result.
+    ///
+    /// Arrays are sparse, so `index` may be beyond the current length.
+    /// Negative indices are rejected by the server.
+    /// [Redis Docs](https://redis.io/commands/ARSET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arset<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, index: usize, values: V) -> (usize) {
+        cmd("ARSET").arg(key).arg(index).arg(values).take()
+    }
+
+    /// Get the value stored at `index` in an array.
+    ///
+    /// Returns `None` if the key does not exist, the index is empty (a gap in a sparse array), or the index is out of range.
+    /// [Redis Docs](https://redis.io/commands/ARGET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arget<K: ToSingleRedisArg>(key: K, index: usize) -> (Option<String>) {
+        cmd("ARGET").arg(key).arg(index).take()
+    }
+
+    /// Get the length of an array, defined as the maximum index + 1.
+    ///
+    /// This is not the number of populated slots (use `ARCOUNT` for that).
+    /// A sparse array can report a length larger than its element count.
+    /// Returns `0` if the key does not exist.
+    /// [Redis Docs](https://redis.io/commands/ARLEN)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arlen<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("ARLEN").arg(key).take()
+    }
+
+    /// Delete the elements at the given indices in an array.
+    ///
+    /// Returns the number of actually deleted elements.
+    /// Deleting an index that is already empty does not count.
+    /// Deleting elements does not shrink the reported length (see `ARLEN`).
+    /// [Redis Docs](https://redis.io/commands/ARDEL)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn ardel<K: ToSingleRedisArg>(key: K, indices: &'a [usize]) -> (usize) {
+        cmd("ARDEL").arg(key).arg(indices).take()
+    }
+
+    /// Get the number of non-empty elements in an array.
+    ///
+    /// Unlike `ARLEN` (which reports the maximum index + 1), this counts only populated slots, so it is unaffected by gaps in a sparse array.
+    /// Returns `0` if the key does not exist.
+    /// [Redis Docs](https://redis.io/commands/ARCOUNT)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arcount<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("ARCOUNT").arg(key).take()
     }
 
     // hyperloglog commands
