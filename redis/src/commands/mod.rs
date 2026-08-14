@@ -45,8 +45,8 @@ pub mod acl;
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub mod vector_sets;
 
-#[cfg(feature = "redis-arrays-preview-unfinished")]
-#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+#[cfg(feature = "redis-arrays-preview")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
 pub mod redis_arrays;
 
 pub mod hotkeys;
@@ -1598,8 +1598,8 @@ implement_commands! {
     /// Arrays are sparse, so `index` may be beyond the current length.
     /// Negative indices are rejected by the server.
     /// [Redis Docs](https://redis.io/commands/ARSET)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arset<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, index: usize, values: V) -> (usize) {
         cmd("ARSET").arg(key).arg(index).arg(values).take()
     }
@@ -1608,8 +1608,8 @@ implement_commands! {
     ///
     /// Returns `None` if the key does not exist, the index is empty (a gap in a sparse array), or the index is out of range.
     /// [Redis Docs](https://redis.io/commands/ARGET)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arget<K: ToSingleRedisArg>(key: K, index: usize) -> (Option<String>) {
         cmd("ARGET").arg(key).arg(index).take()
     }
@@ -1620,8 +1620,8 @@ implement_commands! {
     /// A sparse array can report a length larger than its element count.
     /// Returns `0` if the key does not exist.
     /// [Redis Docs](https://redis.io/commands/ARLEN)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arlen<K: ToSingleRedisArg>(key: K) -> (usize) {
         cmd("ARLEN").arg(key).take()
     }
@@ -1632,8 +1632,8 @@ implement_commands! {
     /// Deleting an index that is already empty does not count.
     /// Deleting elements does not shrink the reported length (see `ARLEN`).
     /// [Redis Docs](https://redis.io/commands/ARDEL)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn ardel<K: ToSingleRedisArg>(key: K, indices: &'a [usize]) -> (usize) {
         cmd("ARDEL").arg(key).arg(indices).take()
     }
@@ -1643,8 +1643,8 @@ implement_commands! {
     /// Unlike `ARLEN` (which reports the maximum index + 1), this counts only populated slots, so it is unaffected by gaps in a sparse array.
     /// Returns `0` if the key does not exist.
     /// [Redis Docs](https://redis.io/commands/ARCOUNT)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arcount<K: ToSingleRedisArg>(key: K) -> (usize) {
         cmd("ARCOUNT").arg(key).take()
     }
@@ -1655,8 +1655,8 @@ implement_commands! {
     /// Returns the number of new (previously-empty) slots that were filled.
     /// Overwriting existing slots does not count.
     /// [Redis Docs](https://redis.io/commands/ARMSET)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn armset<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, items: &'a [(usize, V)]) -> (usize) {
         cmd("ARMSET").arg(key).arg(items).take()
     }
@@ -1665,8 +1665,8 @@ implement_commands! {
     ///
     /// The reply preserves the order of the requested indices, with `None` for any index that is empty (a gap in a sparse array) or out of range.
     /// [Redis Docs](https://redis.io/commands/ARMGET)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn armget<K: ToSingleRedisArg>(key: K, indices: &'a [usize]) -> (Vec<Option<String>>) {
         cmd("ARMGET").arg(key).arg(indices).take()
     }
@@ -1677,8 +1677,8 @@ implement_commands! {
     /// Indices past the array length are padded with `None`.
     /// If `start > end` the values are returned in reverse index order.
     /// [Redis Docs](https://redis.io/commands/ARGETRANGE)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn argetrange<K: ToSingleRedisArg>(key: K, start: usize, end: usize) -> (Vec<Option<String>>) {
         cmd("ARGETRANGE").arg(key).arg(start).arg(end).take()
     }
@@ -1690,8 +1690,8 @@ implement_commands! {
     /// Returns the number of elements actually deleted.
     /// Like `ARDEL`, this clears slots in place without shifting or compacting the remaining elements.
     /// [Redis Docs](https://redis.io/commands/ARDELRANGE)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn ardelrange<K: ToSingleRedisArg>(key: K, ranges: &'a [(usize, usize)]) -> (usize) {
         cmd("ARDELRANGE").arg(key).arg(ranges).take()
     }
@@ -1703,8 +1703,8 @@ implement_commands! {
     /// The cursor is only affected by `ARINSERT`, `ARRING` and `ARSEEK` - **not** by `ARSET`.
     /// Returns the index of the last element written.
     /// [Redis Docs](https://redis.io/commands/ARINSERT)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arinsert<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, values: V) -> (usize) {
         cmd("ARINSERT").arg(key).arg(values).take()
     }
@@ -1713,8 +1713,8 @@ implement_commands! {
     ///
     /// Returns `0` for a key that does not exist.
     /// [Redis Docs](https://redis.io/commands/ARNEXT)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arnext<K: ToSingleRedisArg>(key: K) -> (usize) {
         cmd("ARNEXT").arg(key).take()
     }
@@ -1723,8 +1723,8 @@ implement_commands! {
     ///
     /// Returns `true` on success.
     /// [Redis Docs](https://redis.io/commands/ARSEEK)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arseek<K: ToSingleRedisArg>(key: K, index: usize) -> (bool) {
         cmd("ARSEEK").arg(key).arg(index).take()
     }
@@ -1734,8 +1734,8 @@ implement_commands! {
     /// Shares the write cursor with `ARINSERT` (see `ARNEXT` / `ARSEEK`).
     /// Returns the index of the last element written.
     /// [Redis Docs](https://redis.io/commands/ARRING)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arring<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, size: std::num::NonZeroUsize, values: V) -> (usize) {
         cmd("ARRING").arg(key).arg(size).arg(values).take()
     }
@@ -1747,8 +1747,8 @@ implement_commands! {
     /// Fewer than `count` entries are returned if the array holds fewer elements.
     /// A missing key yields an empty result.
     /// [Redis Docs](https://redis.io/commands/ARLASTITEMS)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arlastitems<K: ToSingleRedisArg>(key: K, count: usize, options: &'a redis_arrays::ArrayLastItemsOptions) -> (Vec<Option<String>>) {
         cmd("ARLASTITEMS").arg(key).arg(count).arg(options).take()
     }
@@ -1759,16 +1759,16 @@ implement_commands! {
     /// If `start > end` the pairs are returned in reverse index order.
     /// To page, use `arscan_options` with a `LIMIT` and pass the index after the last returned one as the next `start`.
     /// [Redis Docs](https://redis.io/commands/ARSCAN)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arscan<K: ToSingleRedisArg>(key: K, start: usize, end: usize) -> (Vec<(usize, String)>) {
         cmd("ARSCAN").arg(key).arg(start).arg(end).take()
     }
 
     /// Like `arscan`, but with a `LIMIT` on the number of pairs returned.
     /// [Redis Docs](https://redis.io/commands/ARSCAN)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arscan_options<K: ToSingleRedisArg>(key: K, start: usize, end: usize, options: &'a redis_arrays::ArrayScanOptions) -> (Vec<(usize, String)>) {
         cmd("ARSCAN").arg(key).arg(start).arg(end).arg(options).take()
     }
@@ -1778,8 +1778,8 @@ implement_commands! {
     /// The reply type depends on the [`operation`](redis_arrays::ArrayAggregateOp), so the return type is generic and chosen by the caller
     /// (e.g. `i64` for bitwise/count operations, `f64` for a fractional `SUM`, or `Option<_>` when the range may hold no numeric elements).
     /// [Redis Docs](https://redis.io/commands/AROP)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arop<K: ToSingleRedisArg>(key: K, start: usize, end: usize, operation: redis_arrays::ArrayAggregateOp<'a>) -> Generic {
         cmd("AROP").arg(key).arg(start).arg(end).arg(operation).take()
     }
@@ -1789,8 +1789,8 @@ implement_commands! {
     /// With [`ArrayInfoOptions::set_full`](redis_arrays::ArrayInfoOptions::set_full), additional per-slice statistics are included (at O(N) cost).
     /// Querying a key that does not exist is an error, not an empty map.
     /// [Redis Docs](https://redis.io/commands/ARINFO)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn arinfo<K: ToSingleRedisArg>(key: K, options: &'a redis_arrays::ArrayInfoOptions) -> (std::collections::HashMap<String, crate::Value>) {
         cmd("ARINFO").arg(key).arg(options).take()
     }
@@ -1801,8 +1801,8 @@ implement_commands! {
     /// [`ArrayBound`](redis_arrays::ArrayBound) bounds allow the `-`/`+` sentinels and reverse iteration.
     /// Use `argrep_options` for a result `LIMIT`, an `AND` combinator, case-insensitive matching, or `WITHVALUES` (which returns index-value pairs instead of bare indices).
     /// [Redis Docs](https://redis.io/commands/ARGREP)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn argrep<K: ToSingleRedisArg>(key: K, start: redis_arrays::ArrayBound, end: redis_arrays::ArrayBound, predicates: &'a [redis_arrays::ArrayPredicate<'a>]) -> (Vec<usize>) {
         cmd("ARGREP").arg(key).arg(start).arg(end).arg(predicates).take()
     }
@@ -1811,8 +1811,8 @@ implement_commands! {
     ///
     /// With `WITHVALUES` the reply is `(index, value)` pairs, so choose the matching return type (`Vec<(usize, String)>`), otherwise it is a list of indices (`Vec<usize>`).
     /// [Redis Docs](https://redis.io/commands/ARGREP)
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    #[cfg(feature = "redis-arrays-preview")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
     fn argrep_options<K: ToSingleRedisArg>(key: K, start: redis_arrays::ArrayBound, end: redis_arrays::ArrayBound, predicates: &'a [redis_arrays::ArrayPredicate<'a>], options: &'a redis_arrays::ArrayGrepOptions) -> Generic {
         cmd("ARGREP").arg(key).arg(start).arg(end).arg(predicates).arg(options).take()
     }

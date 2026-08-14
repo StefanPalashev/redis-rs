@@ -22,7 +22,7 @@ mod basic {
     use redis::{RedisError, ServerErrorKind};
     use redis::{calculate_value_digest, is_valid_16_bytes_hex_digest};
 
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     use redis::redis_arrays::{
         ArrayAggregateOp, ArrayBound, ArrayGrepCombinator, ArrayGrepOptions, ArrayInfoOptions,
         ArrayLastItemsOptions, ArrayPredicate, ArrayScanOptions,
@@ -35,7 +35,7 @@ mod basic {
     use redis_test::redis_value;
     use redis_test::server::redis_settings;
     use redis_test::utils::get_listener_on_free_port;
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     use std::num::NonZeroUsize;
 
     use assert_matches::assert_matches;
@@ -4266,7 +4266,7 @@ mod basic {
 
     /// Validates the core read/write surface of the Array data type (Redis 8.8+):
     /// `ARSET`, `ARGET`, `ARLEN`, `ARCOUNT` and `ARDEL`, including sparse-array semantics.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_basic_operations() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4313,7 +4313,7 @@ mod basic {
 
     /// Validates the bulk read/write commands of the Array data type (Redis 8.8+):
     /// `ARMSET` and `ARMGET`, including non-contiguous pairs and order-preserving reads.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_multi_operations() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4351,7 +4351,7 @@ mod basic {
 
     /// Validates the range commands of the Array data type (Redis 8.8+):
     /// `ARGETRANGE` and `ARDELRANGE`, including reverse reads and the in-place (non-compacting) delete semantics.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_range_operations() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4425,7 +4425,7 @@ mod basic {
 
     /// Validates the write-cursor commands of the Array data type (Redis 8.8+):
     /// `ARINSERT`, `ARNEXT`, `ARSEEK`, `ARRING` and `ARLASTITEMS`.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_cursor_operations() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4501,7 +4501,7 @@ mod basic {
 
     /// Validates the scan / aggregate / introspection commands of the Array data type (Redis 8.8+):
     /// `ARSCAN`, `AROP`, `ARINFO`.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_scan_aggregate_and_info() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4612,7 +4612,7 @@ mod basic {
 
     /// Validates the search command of the Array data type (Redis 8.8+):
     /// `ARGREP`, including the predicate kinds, the flat combinator, `NOCASE` and `WITHVALUES`.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_search_operations() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4695,7 +4695,7 @@ mod basic {
 
     /// Showcases `ARGREP` boolean compositions.
     /// A single flat combinator applies to the whole predicate list (no grouping/precedence) and grouped logic is expressed via a single `RE` predicate instead.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_argrep_boolean_composition() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4829,7 +4829,7 @@ mod basic {
     /// - ASCII-only `\d`
     ///
     /// Also verifies that `AROP`'s `MATCH` option is case-sensitive.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_argrep_engine() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
@@ -4974,7 +4974,7 @@ mod basic {
     }
 
     /// Validates Array behavior on missing keys, empty values, and invalid arguments.
-    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg(feature = "redis-arrays-preview")]
     #[test]
     fn test_arrays_edge_cases() {
         let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
