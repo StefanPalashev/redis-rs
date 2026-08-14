@@ -62,8 +62,8 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARINFO" | b"ARLASTITEMS" | b"ARLEN"
-        | b"ARMGET" | b"ARNEXT" | b"AROP" | b"ARSCAN" | b"BITCOUNT" | b"BITFIELD_RO"
+        b"ARCOUNT" | b"ARGET" | b"ARGETRANGE" | b"ARGREP" | b"ARINFO" | b"ARLASTITEMS"
+        | b"ARLEN" | b"ARMGET" | b"ARNEXT" | b"AROP" | b"ARSCAN" | b"BITCOUNT" | b"BITFIELD_RO"
         | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET"
         | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN"
         | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET"
@@ -1793,6 +1793,28 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
     fn arinfo<K: ToSingleRedisArg>(key: K, options: &'a redis_arrays::ArrayInfoOptions) -> (std::collections::HashMap<String, crate::Value>) {
         cmd("ARINFO").arg(key).arg(options).take()
+    }
+
+    /// Search the elements in the range `[start, end]` of an array using one or more textual predicates, returning the matching indices.
+    ///
+    /// Multiple predicates are combined with `OR` by default.
+    /// [`ArrayBound`](redis_arrays::ArrayBound) bounds allow the `-`/`+` sentinels and reverse iteration.
+    /// Use `argrep_options` for a result `LIMIT`, an `AND` combinator, case-insensitive matching, or `WITHVALUES` (which returns index-value pairs instead of bare indices).
+    /// [Redis Docs](https://redis.io/commands/ARGREP)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn argrep<K: ToSingleRedisArg>(key: K, start: redis_arrays::ArrayBound, end: redis_arrays::ArrayBound, predicates: &'a [redis_arrays::ArrayPredicate<'a>]) -> (Vec<usize>) {
+        cmd("ARGREP").arg(key).arg(start).arg(end).arg(predicates).take()
+    }
+
+    /// Like `argrep`, but with options controlling the predicate combinator, a result `LIMIT`, `WITHVALUES`, and case-insensitive (`NOCASE`) matching.
+    ///
+    /// With `WITHVALUES` the reply is `(index, value)` pairs, so choose the matching return type (`Vec<(usize, String)>`), otherwise it is a list of indices (`Vec<usize>`).
+    /// [Redis Docs](https://redis.io/commands/ARGREP)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn argrep_options<K: ToSingleRedisArg>(key: K, start: redis_arrays::ArrayBound, end: redis_arrays::ArrayBound, predicates: &'a [redis_arrays::ArrayPredicate<'a>], options: &'a redis_arrays::ArrayGrepOptions) -> Generic {
+        cmd("ARGREP").arg(key).arg(start).arg(end).arg(predicates).arg(options).take()
     }
 
     // hyperloglog commands

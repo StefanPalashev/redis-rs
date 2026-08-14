@@ -24,7 +24,8 @@ mod basic {
 
     #[cfg(feature = "redis-arrays-preview-unfinished")]
     use redis::redis_arrays::{
-        ArrayAggregateOp, ArrayInfoOptions, ArrayLastItemsOptions, ArrayScanOptions,
+        ArrayAggregateOp, ArrayBound, ArrayGrepCombinator, ArrayGrepOptions, ArrayInfoOptions,
+        ArrayLastItemsOptions, ArrayPredicate, ArrayScanOptions,
     };
     #[cfg(feature = "vector-sets")]
     use redis::vector_sets::{
@@ -4607,6 +4608,369 @@ mod basic {
             .arinfo("missing_arinfo", &ArrayInfoOptions::default())
             .unwrap_err();
         assert_eq!(err.kind(), ServerErrorKind::ResponseError.into());
+    }
+
+    /// Validates the search command of the Array data type (Redis 8.8+):
+    /// `ARGREP`, including the predicate kinds, the flat combinator, `NOCASE` and `WITHVALUES`.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_search_operations() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // ARGREP - textual predicates over a log-like array
+        let key = "test_array_argrep";
+        con.armset(
+            key,
+            &[
+                (0, "warn:disk"),
+                (1, "info:boot"),
+                (2, "error:net"),
+                (3, "debug:x"),
+                (4, "fatal:panic"),
+                (5, "info:ok"),
+            ],
+        )
+        .unwrap();
+        // Three predicates combined with OR, using -/+ sentinel bounds.
+        let matches: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[
+                    ArrayPredicate::Glob("warn:*"),
+                    ArrayPredicate::Glob("error:*"),
+                    ArrayPredicate::Glob("fatal:*"),
+                ],
+                &ArrayGrepOptions::default().set_combinator(ArrayGrepCombinator::Or),
+            )
+            .unwrap();
+        assert_eq!(matches, vec![0, 2, 4]);
+        // Bare argrep with a single predicate (default OR), explicit indices.
+        let exact: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Index(0),
+                ArrayBound::Index(5),
+                &[ArrayPredicate::Exact("debug:x")],
+            )
+            .unwrap();
+        assert_eq!(exact, vec![3]);
+        // AND across two predicates returns only elements matching both.
+        let both: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("info:*"), ArrayPredicate::Match("ok")],
+                &ArrayGrepOptions::default().set_combinator(ArrayGrepCombinator::And),
+            )
+            .unwrap();
+        assert_eq!(both, vec![5]);
+        // NOCASE makes EXACT case-insensitive.
+        con.arset(key, 6, "WARN:cpu").unwrap();
+        let nocase: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("warn:*")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(nocase, vec![0, 6]);
+        // WITHVALUES returns index-value pairs.
+        let pairs: Vec<(usize, String)> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Glob("error:*")],
+                &ArrayGrepOptions::default().set_with_values(true),
+            )
+            .unwrap();
+        assert_eq!(pairs, vec![(2, "error:net".to_string())]);
+    }
+
+    /// Showcases `ARGREP` boolean compositions.
+    /// A single flat combinator applies to the whole predicate list (no grouping/precedence) and grouped logic is expressed via a single `RE` predicate instead.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_argrep_boolean_composition() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        let key = "test_array_shapes";
+        con.armset(
+            key,
+            &[
+                (0, "red circle"),
+                (1, "red square"),
+                (2, "blue circle"),
+                (3, "blue square"),
+                (4, "green circle"),
+                (5, "green square"),
+                (6, "red triangle"),
+                (7, "blue triangle"),
+                (8, "green triangle"),
+            ],
+        )
+        .unwrap();
+
+        // Helper: run ARGREP over the whole array with a flat combinator.
+        let grep = |con: &mut redis::Connection, preds: &[ArrayPredicate], comb| -> Vec<usize> {
+            con.argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                preds,
+                &ArrayGrepOptions::default().set_combinator(comb),
+            )
+            .unwrap()
+        };
+
+        // Single substring predicates.
+        let single: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Match("red")],
+            )
+            .unwrap();
+        assert_eq!(single, vec![0, 1, 6]);
+        let circle: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Match("circle")],
+            )
+            .unwrap();
+        assert_eq!(circle, vec![0, 2, 4]);
+
+        // Flat OR / AND.
+        assert_eq!(
+            grep(
+                &mut con,
+                &[ArrayPredicate::Match("red"), ArrayPredicate::Match("blue")],
+                ArrayGrepCombinator::Or
+            ),
+            vec![0, 1, 2, 3, 6, 7]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("red"),
+                    ArrayPredicate::Match("circle")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![0]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("blue"),
+                    ArrayPredicate::Match("square")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![3]
+        );
+        assert_eq!(
+            grep(
+                &mut con,
+                &[
+                    ArrayPredicate::Match("green"),
+                    ArrayPredicate::Match("triangle")
+                ],
+                ArrayGrepCombinator::And
+            ),
+            vec![8]
+        );
+
+        // Grouped boolean logic is NOT expressible via combinators (mixed AND/OR collapses to all-AND and matches nothing) - use a single RE instead.
+        let group1: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("(red|blue) triangle")],
+            )
+            .unwrap();
+        assert_eq!(group1, vec![6, 7]); // (red OR blue) AND triangle
+        let group2: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("green (circle|square)")],
+            )
+            .unwrap();
+        assert_eq!(group2, vec![4, 5]); // (circle OR square) AND green
+        let group3: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("red (circle|triangle)")],
+            )
+            .unwrap();
+        assert_eq!(group3, vec![0, 6]); // red AND (circle OR triangle)
+    }
+
+    /// Tests `ARGREP`'s matching semantics, including:
+    /// - `NOCASE` scope and ASCII-only case folding
+    /// - lack of backreferences and lookaround in the regex engine
+    /// - ASCII-only `\d`
+    ///
+    /// Also verifies that `AROP`'s `MATCH` option is case-sensitive.
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[test]
+    fn test_arrays_argrep_engine() {
+        let ctx = run_test_if_version_supported!(REDIS_CE_8_8);
+        let mut con = ctx.connection();
+
+        // NOCASE applies across all predicate types.
+        let key = "test_array_nocase";
+        con.armset(
+            key,
+            &[
+                (0, "Hello World"),
+                (1, "hello world"),
+                (2, "HELLO WORLD"),
+                (3, "HeLLo"),
+            ],
+        )
+        .unwrap();
+        let case_each = |con: &mut redis::Connection, pred: ArrayPredicate| -> Vec<usize> {
+            con.argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[pred],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Exact("hello world")),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Match("hello")),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(
+            case_each(&mut con, ArrayPredicate::Glob("hello*")),
+            vec![0, 1, 2, 3]
+        );
+        // RE: NOCASE option and inline (?i) are equivalent.
+        let re_nocase: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("^hello")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(re_nocase, vec![0, 1, 2, 3]);
+        let re_inline: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re("(?i)^hello")],
+            )
+            .unwrap();
+        assert_eq!(re_inline, vec![0, 1, 2, 3]);
+
+        // Case folding is ASCII-only: é/É are not folded.
+        let key = "test_array_unicode";
+        con.armset(key, &[(0, "Café"), (1, "CAFÉ"), (2, "café")])
+            .unwrap();
+        // EXACT "café" NOCASE folds the ASCII C but not é, so CAFÉ (index 1) is excluded.
+        let folded: Vec<usize> = con
+            .argrep_options(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Exact("café")],
+                &ArrayGrepOptions::default().set_nocase(true),
+            )
+            .unwrap();
+        assert_eq!(folded, vec![0, 2]);
+
+        // RE engine limitations: backreferences and lookaround error.
+        let key = "test_array_re_engine";
+        con.armset(
+            key,
+            &[
+                (0, "aa"),
+                (1, "foobar"),
+                (2, "price100"),
+                (3, "no digits"),
+                (4, "٣٤٥"),
+            ],
+        )
+        .unwrap();
+        let backref: RedisResult<Vec<usize>> = con.argrep(
+            key,
+            ArrayBound::Start,
+            ArrayBound::End,
+            &[ArrayPredicate::Re(r"(.)\1")],
+        );
+        assert_eq!(
+            backref.unwrap_err().kind(),
+            ServerErrorKind::ResponseError.into()
+        );
+        let lookaround: RedisResult<Vec<usize>> = con.argrep(
+            key,
+            ArrayBound::Start,
+            ArrayBound::End,
+            &[ArrayPredicate::Re("foo(?=bar)")],
+        );
+        assert_eq!(
+            lookaround.unwrap_err().kind(),
+            ServerErrorKind::ResponseError.into()
+        );
+        // \d is ASCII-only: matches the ASCII-digit element, not the Arabic-Indic one.
+        let digits: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re(r"\d{3}")],
+            )
+            .unwrap();
+        assert_eq!(digits, vec![2]);
+        let only_digits: Vec<usize> = con
+            .argrep(
+                key,
+                ArrayBound::Start,
+                ArrayBound::End,
+                &[ArrayPredicate::Re(r"^\d+$")],
+            )
+            .unwrap();
+        assert_eq!(only_digits, Vec::<usize>::new());
+
+        // AROP MATCH is case-sensitive (the API offers no NOCASE for it).
+        let key = "test_array_arop_match";
+        con.armset(key, &[(0, "ERROR:disk"), (1, "error:net")])
+            .unwrap();
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 1, ArrayAggregateOp::Match("ERROR:disk")),
+            Ok(1)
+        );
+        assert_eq!(
+            con.arop::<i64, _>(key, 0, 1, ArrayAggregateOp::Match("error:disk")),
+            Ok(0)
+        );
     }
 
     /// Validates Array behavior on missing keys, empty values, and invalid arguments.
