@@ -107,6 +107,7 @@
 //! * `sentinel`: enables high-level interfaces for communication with Redis sentinels (optional)
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
 //! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
+//! * `redis-arrays-preview`: enables support for the Redis Arrays data structure (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -764,6 +765,10 @@ pub use crate::commands::AsyncHotkeysCommands;
 #[cfg(feature = "vector-sets")]
 #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
 pub use crate::commands::vector_sets;
+
+#[cfg(feature = "redis-arrays-preview")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
+pub use crate::commands::redis_arrays;
 
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
