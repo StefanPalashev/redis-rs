@@ -38,6 +38,11 @@ test:
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix
 
 	@echo "===================================================================="
+	@echo "Testing Connection Type UNIX SOCKETS and RESP3"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=unix PROTOCOL=RESP3 RUST_BACKTRACE=1 cargo nextest run --locked -p redis --all-features --profile unix	
+
+	@echo "===================================================================="
 	@echo "Testing redis-test"
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" RUST_BACKTRACE=1 cargo nextest run --locked -p redis-test
@@ -64,7 +69,18 @@ test-module-bloom:
 	@echo "===================================================================="
 	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_bloom
 
-test-modules: test-module-json test-module-bloom
+test-module-search:
+	@echo "===================================================================="
+	@echo "Testing RESP2 with RediSearch module"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 cargo nextest run -p redis --locked --all-features --profile module_search
+
+	@echo "===================================================================="
+	@echo "Testing RESP3 with RediSearch module"
+	@echo "===================================================================="
+	@RUSTFLAGS="-D warnings" REDISRS_SERVER_TYPE=tcp RUST_BACKTRACE=1 PROTOCOL=RESP3 cargo nextest run -p redis --locked --all-features --profile module_search
+
+test-modules: test-module-json test-module-bloom test-module-search
 
 test-single: test
 
