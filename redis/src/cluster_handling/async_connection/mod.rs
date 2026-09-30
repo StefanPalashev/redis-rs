@@ -1743,8 +1743,8 @@ where
         trace!("poll_flush: {:?}", self.state);
         loop {
             self.send_refresh_error();
-            self.poll_reconnects(cx);
 
+            // If we have a recovery future, poll it until completion first.
             if let Err(err) = ready!(self.as_mut().poll_recover(cx)) {
                 self.refresh_error = Some(err);
 
@@ -1754,6 +1754,10 @@ where
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
+            // Reconnect futures can be polled only if when the recovery future is not running.
+            // Otherwise you may end up in a deadlock.
+            // See https://github.com/redis-rs/redis-rs/issues/2418.
+            self.poll_reconnects(cx);
 
             match ready!(self.poll_complete(cx)) {
                 PollFlushAction::None => return Poll::Ready(Ok(())),
@@ -1889,10 +1893,16 @@ where
             return Err(err);
         }
     };
-    // If READONLY is sent to primary nodes, it will have no effect.
-    // We set this unconditionally, because we don't know whether we'll be making read calls
-    // to replicas. (We allow overriding routing per-call)
-    let mut readonly_cmd = cmd("READONLY");
+    let mut readonly_cmd = if params.read_routing_factory.is_some() {
+        // If READONLY is sent to primary nodes, it will have no effect.
+        // We set this conditionally, because we don't know whether we'll be making read calls
+        // to replicas. (We allow overriding routing per-call)
+        cmd("READONLY")
+    } else {
+        // if readonly reading isn't set, we don't want to send READONLY, since some Redis providers don't support this command
+        // (for example, azure managed redis - https://redis.io/docs/latest/operate/rs/references/compatibility/commands/cluster/)
+        cmd("PING")
+    };
     readonly_cmd.skip_concurrency_limit = true;
     conn.req_packed_command(&readonly_cmd).await?;
     Ok(conn)

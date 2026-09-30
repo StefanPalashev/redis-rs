@@ -1,3 +1,36 @@
+### 1.7.1 (2026-09-25)
+
+#### Changes & Bug fixes
+
+* Add the remaining simple field types for `FT.CREATE` [3/8] ([#2317](https://github.com/redis-rs/redis-rs/pull/2317) by @StefanPalashev)
+* Fix READONLY being sent to servers that don't support it. ([#2414](https://github.com/redis-rs/redis-rs/pull/2414) by @nihohit)
+* fix: async cluster client deadlock when refresh_slots() race with rec… ([#2419](https://github.com/redis-rs/redis-rs/pull/2419) by @virratanasangpunth)
+
+#### CI & operational improvements
+
+* docs: Fix casing of Valkey ([#2412](https://github.com/redis-rs/redis-rs/pull/2412) by @somechris)
+* ci: Bump Redis 8.8 to Redis 8.10 ([#2402](https://github.com/redis-rs/redis-rs/pull/2402) by @somechris)
+* ci: Bump Valkey patch versions ([#2405](https://github.com/redis-rs/redis-rs/pull/2405) by @somechris)
+* ci: Build servers in parallel ([#2408](https://github.com/redis-rs/redis-rs/pull/2408) by @somechris)
+* doc: Add `PROTOCOL` variable ([#2409](https://github.com/redis-rs/redis-rs/pull/2409) by @somechris)
+
+### 1.7.0 (2026-09-05)
+
+#### Changes & Bug fixes
+
+* Add the `FT.CREATE` command builder and index schema (WIP) ([#2303](https://github.com/redis-rs/redis-rs/pull/2303) by @StefanPalashev)
+* Add support for the `INCREX` command ([#2216](https://github.com/redis-rs/redis-rs/pull/2216) by @StefanPalashev)
+* Switch to `combine` version with `opaque` fix ([#2322](https://github.com/redis-rs/redis-rs/pull/2322) by @somechris)
+* Report the underlying error from the r2d2 `is_valid` health check ([#2321](https://github.com/redis-rs/redis-rs/pull/2321) by @AbhinavMir)
+* MultiplexedConnection: Fix reporting errors on RESP3 & Unix ([#2350](https://github.com/redis-rs/redis-rs/pull/2350) by @nihohit)
+
+#### CI & operational improvements
+
+* ci: Bump minor server versions to latest ([#2357](https://github.com/redis-rs/redis-rs/pull/2357) by @somechris)
+* spelling: Change `infos` to `info` ([#2374](https://github.com/redis-rs/redis-rs/pull/2374) by @somechris)
+* Fix latest nightly lints ([#2378](https://github.com/redis-rs/redis-rs/pull/2378) by @nihohit)
+* docs: Split development parts in README.md into dedicated documents ([#2331](https://github.com/redis-rs/redis-rs/pull/2331) by @somechris)
+
 ### 1.6.0 (2026-08-15)
 
 #### Changes & Bug fixes
