@@ -108,6 +108,7 @@
 //! * `json`: enables high-level interfaces for communication with the JSON module (optional)
 //! * `search_unfinished`: enables high-level interfaces for communication with the Search module (optional) NOTE: Currently, this feature is incomplete and should be considered a work in progress.
 //! * `cache-aio`: enables **experimental** client side caching for MultiplexedConnection, ConnectionManager and async ClusterConnection (optional)
+//! * `redis-arrays-preview`: enables support for the Redis Arrays data structure (optional)
 //!
 //! ## Connection Parameters
 //!
@@ -770,6 +771,10 @@ pub use crate::commands::vector_sets;
 #[cfg(feature = "search_unfinished")]
 #[cfg_attr(docsrs, doc(cfg(feature = "search_unfinished")))]
 pub use crate::commands::search;
+
+#[cfg(feature = "redis-arrays-preview")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview")))]
+pub use crate::commands::redis_arrays;
 
 #[cfg(feature = "geospatial")]
 #[cfg_attr(docsrs, doc(cfg(feature = "geospatial")))]
