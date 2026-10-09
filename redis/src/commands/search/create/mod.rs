@@ -78,10 +78,12 @@
 mod fields;
 mod options;
 mod schema;
+mod vector;
 
 pub use fields::*;
 pub use options::*;
 pub use schema::*;
+pub use vector::*;
 
 use crate::Cmd;
 
@@ -101,6 +103,7 @@ use crate::Cmd;
 ///     .options(CreateOptions::new().on(IndexDataType::Hash))
 ///     .into_cmd();
 /// ```
+#[derive(Debug)]
 pub struct FtCreateCommand {
     index: String,
     options: CreateOptions,
