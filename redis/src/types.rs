@@ -16,8 +16,28 @@ use std::str::from_utf8;
 
 use crate::errors::{RedisError, ServerError};
 
+/// Renders an `Option` as `"set"` or `"not set"` for `Debug` output.
+///
+/// Used for configuration fields whose payload has no useful `Debug` representation - trait
+/// objects and closures - where whether one was supplied is the only meaningful information.
+pub(crate) fn set_or_unset<T>(value: &Option<T>) -> &'static str {
+    if value.is_some() { "set" } else { "not set" }
+}
+
+/// Renders an `Option` as `"<redacted>"` or `"not set"` for `Debug` output.
+///
+/// Used for secrets, so that a configured value is acknowledged without revealing it.
+#[cfg(any(feature = "tls-rustls", feature = "cluster", feature = "sentinel"))]
+pub(crate) fn redacted_if_set<T>(value: &Option<T>) -> &'static str {
+    if value.is_some() {
+        "<redacted>"
+    } else {
+        "not set"
+    }
+}
+
 /// Helper enum that is used to define expiry time
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum Expiry {
     /// EX seconds -- Set the specified expire time, in seconds.
@@ -33,7 +53,7 @@ pub enum Expiry {
 }
 
 /// Helper enum that is used to define expiry time for SET command
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum SetExpiry {
     /// EX seconds -- Set the specified expire time, in seconds.
@@ -79,7 +99,7 @@ impl ToRedisArgs for SetExpiry {
 }
 
 /// Helper enum that is used to define existence checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum ExistenceCheck {
     /// NX -- Only set the key if it does not already exist.
@@ -105,7 +125,7 @@ impl ToRedisArgs for ExistenceCheck {
 }
 
 /// Helper enum that is used to define field existence checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum FieldExistenceCheck {
     /// FNX -- Only set the fields if all do not already exist.
@@ -387,6 +407,7 @@ impl fmt::Display for PushKind {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum MapIter<'a> {
     Array(std::slice::Iter<'a, Value>),
@@ -414,6 +435,7 @@ impl<'a> Iterator for MapIter<'a> {
     }
 }
 
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum OwnedMapIter {
     Array(std::vec::IntoIter<Value>),
@@ -2485,7 +2507,7 @@ impl ProtocolVersion {
 }
 
 /// Helper enum that is used to define option for the hash expire commands
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum ExpireOption {
     /// NONE -- Set expiration regardless of the field's current expiration.

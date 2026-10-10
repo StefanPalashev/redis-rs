@@ -8,7 +8,7 @@ use crate::search::{CreateOptions, SearchSchema};
 use crate::types::{
     ExistenceCheck, ExpireOption, Expiry, FieldExistenceCheck, FromRedisValue, IncrexResult,
     IntegerReplyOrNoOp, NumericBehavior, RedisResult, RedisWrite, SetExpiry, ToRedisArgs,
-    ToSingleRedisArg, ValueComparison,
+    ToSingleRedisArg, ValueComparison, set_or_unset,
 };
 
 #[cfg(feature = "vector-sets")]
@@ -64,18 +64,17 @@ enum Properties {
 fn command_properties(cmd: &[u8]) -> Properties {
     match cmd {
         // ReadonlyCacheable: Commands that operate on concrete keys and return cacheable values
-        b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP" | b"EXISTS" | b"GEODIST"
-        | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE" | b"HEXISTS" | b"HGET"
-        | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN" | b"HVALS" | b"JSON.ARRINDEX"
-        | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN" | b"JSON.OBJKEYS" | b"JSON.MGET"
-        | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE" | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS"
-        | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF" | b"SINTER" | b"SINTERCARD" | b"SISMEMBER"
-        | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN" | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD"
-        | b"ZCOUNT" | b"ZDIFF" | b"ZINTER" | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE"
-        | b"ZRANGE" | b"ZRANGEBYLEX" | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE"
-        | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE" | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => {
-            Properties::ReadOnlyCacheable
-        }
+        b"ARCOUNT" | b"ARGET" | b"ARLEN" | b"BITCOUNT" | b"BITFIELD_RO" | b"BITPOS" | b"DUMP"
+        | b"EXISTS" | b"GEODIST" | b"GEOHASH" | b"GEOPOS" | b"GET" | b"GETBIT" | b"GETRANGE"
+        | b"HEXISTS" | b"HGET" | b"HGETALL" | b"HKEYS" | b"HLEN" | b"HMGET" | b"HSTRLEN"
+        | b"HVALS" | b"JSON.ARRINDEX" | b"JSON.ARRLEN" | b"JSON.GET" | b"JSON.OBJLEN"
+        | b"JSON.OBJKEYS" | b"JSON.MGET" | b"JSON.RESP" | b"JSON.STRLEN" | b"JSON.TYPE"
+        | b"LCS" | b"LINDEX" | b"LLEN" | b"LPOS" | b"LRANGE" | b"MGET" | b"SCARD" | b"SDIFF"
+        | b"SINTER" | b"SINTERCARD" | b"SISMEMBER" | b"SMEMBERS" | b"SMISMEMBER" | b"STRLEN"
+        | b"SUBSTR" | b"SUNION" | b"TYPE" | b"ZCARD" | b"ZCOUNT" | b"ZDIFF" | b"ZINTER"
+        | b"ZINTERCARD" | b"ZLEXCOUNT" | b"ZMSCORE" | b"ZRANGE" | b"ZRANGEBYLEX"
+        | b"ZRANGEBYSCORE" | b"ZRANK" | b"ZREVRANGE" | b"ZREVRANGEBYLEX" | b"ZREVRANGEBYSCORE"
+        | b"ZREVRANK" | b"ZSCORE" | b"ZUNION" => Properties::ReadOnlyCacheable,
 
         b"ACL CAT"
         | b"ACL DELUSER"
@@ -1619,6 +1618,67 @@ implement_commands! {
     #[cfg_attr(docsrs, doc(cfg(feature = "vector-sets")))]
     fn vsim_options<K: ToRedisArgs>(key: K, input: vector_sets::VectorSimilaritySearchInput<'a>, options: &'a vector_sets::VSimOptions) -> Generic {
         cmd("VSIM").arg(key).arg(input).arg(options).take()
+    }
+
+    // Array commands (Redis 8.8+)
+
+    /// Set one or more contiguous values in an array, starting at `index`.
+    ///
+    /// Returns the number of new (previously-empty) slots that were filled.
+    /// Overwriting existing slots does not count towards the result.
+    ///
+    /// Arrays are sparse, so `index` may be beyond the current length.
+    /// Negative indices are rejected by the server.
+    /// [Redis Docs](https://redis.io/commands/ARSET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arset<K: ToSingleRedisArg, V: ToRedisArgs>(key: K, index: usize, values: V) -> (usize) {
+        cmd("ARSET").arg(key).arg(index).arg(values).take()
+    }
+
+    /// Get the value stored at `index` in an array.
+    ///
+    /// Returns `None` if the key does not exist, the index is empty (a gap in a sparse array), or the index is out of range.
+    /// [Redis Docs](https://redis.io/commands/ARGET)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arget<K: ToSingleRedisArg>(key: K, index: usize) -> (Option<String>) {
+        cmd("ARGET").arg(key).arg(index).take()
+    }
+
+    /// Get the length of an array, defined as the maximum index + 1.
+    ///
+    /// This is not the number of populated slots (use `ARCOUNT` for that).
+    /// A sparse array can report a length larger than its element count.
+    /// Returns `0` if the key does not exist.
+    /// [Redis Docs](https://redis.io/commands/ARLEN)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arlen<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("ARLEN").arg(key).take()
+    }
+
+    /// Delete the elements at the given indices in an array.
+    ///
+    /// Returns the number of actually deleted elements.
+    /// Deleting an index that is already empty does not count.
+    /// Deleting elements does not shrink the reported length (see `ARLEN`).
+    /// [Redis Docs](https://redis.io/commands/ARDEL)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn ardel<K: ToSingleRedisArg>(key: K, indices: &'a [usize]) -> (usize) {
+        cmd("ARDEL").arg(key).arg(indices).take()
+    }
+
+    /// Get the number of non-empty elements in an array.
+    ///
+    /// Unlike `ARLEN` (which reports the maximum index + 1), this counts only populated slots, so it is unaffected by gaps in a sparse array.
+    /// Returns `0` if the key does not exist.
+    /// [Redis Docs](https://redis.io/commands/ARCOUNT)
+    #[cfg(feature = "redis-arrays-preview-unfinished")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis-arrays-preview-unfinished")))]
+    fn arcount<K: ToSingleRedisArg>(key: K) -> (usize) {
+        cmd("ARCOUNT").arg(key).take()
     }
 
     // hyperloglog commands
@@ -3359,6 +3419,7 @@ assert_eq!(invok_2_res, 5);
 /// Allows pubsub callbacks to stop receiving messages.
 ///
 /// Arbitrary data may be returned from `Break`.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum ControlFlow<U> {
     /// Continues.
@@ -3488,7 +3549,7 @@ impl PubSubCommands for Connection {
 ///     con.scan_options(opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ScanOptions {
     pattern: Option<String>,
     count: Option<usize>,
@@ -3572,7 +3633,7 @@ impl ToRedisArgs for ScanOptions {
 ///     con.lpos(key, value, opts)
 /// }
 /// ```
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LposOptions {
     count: Option<usize>,
     maxlen: Option<usize>,
@@ -3636,6 +3697,7 @@ impl ToRedisArgs for LposOptions {
 }
 
 /// Enum for the LEFT | RIGHT args used by some commands
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Direction {
     /// Targets the first element (head) of the list
@@ -3741,7 +3803,7 @@ impl<Db: ToString> ToSingleRedisArg for CopyOptions<Db> {}
 ///     con.set_options(key, value, opts)
 /// }
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SetOptions {
     conditional_set: Option<ExistenceCheck>,
     /// IFEQ `match-value` - Set the key's value and expiration only if its current value is equal to `match-value`.
@@ -3817,7 +3879,7 @@ impl ToRedisArgs for SetOptions {
 ///     con.mset_ex(&[("key1", "value1"), ("key2", "value2")], opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct MSetOptions {
     conditional_set: Option<ExistenceCheck>,
     expiration: Option<SetExpiry>,
@@ -3863,7 +3925,7 @@ impl ToRedisArgs for MSetOptions {
 ///     con.flushall_options(&opts)
 /// }
 /// ```
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct FlushAllOptions {
     /// Blocking (`SYNC`) waits for completion, non-blocking (`ASYNC`) runs in the background
     pub blocking: bool,
@@ -3895,7 +3957,7 @@ impl ToSingleRedisArg for FlushAllOptions {}
 pub type FlushDbOptions = FlushAllOptions;
 
 /// Options for the HSETEX command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct HashFieldExpirationOptions {
     existence_check: Option<FieldExistenceCheck>,
     expiration: Option<SetExpiry>,
@@ -3986,6 +4048,28 @@ pub struct IncrexOptions<T> {
     enx: bool,
 }
 
+impl<T> std::fmt::Debug for IncrexOptions<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            saturate,
+            lower_bound,
+            upper_bound,
+            expiration,
+            enx,
+        } = self;
+
+        // `T` is unbounded, so deriving `Debug` would add a `T: Debug` bound to the type.
+        // Report only whether a bound was supplied.
+        f.debug_struct("IncrexOptions")
+            .field("saturate", saturate)
+            .field("lower_bound", &set_or_unset(lower_bound))
+            .field("upper_bound", &set_or_unset(upper_bound))
+            .field("expiration", expiration)
+            .field("enx", enx)
+            .finish()
+    }
+}
+
 impl<T: ToSingleRedisArg> IncrexOptions<T> {
     /// Instead of rejecting an out-of-bounds operation,
     /// clamp the result to the specified bound or to the type's limit when no explicit bound is set.
@@ -4048,7 +4132,7 @@ impl<T: ToRedisArgs> ToRedisArgs for IncrexOptions<T> {
 }
 
 /// Helper enum that is used to define update checks
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum UpdateCheck {
     /// LT -- Only update if the new score is less than the current.
@@ -4074,7 +4158,7 @@ impl ToRedisArgs for UpdateCheck {
 }
 
 /// Options for the [ZADD](https://redis.io/commands/zadd) command
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SortedSetAddOptions {
     conditional_set: Option<ExistenceCheck>,
     conditional_update: Option<UpdateCheck>,
